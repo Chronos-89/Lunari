@@ -106,6 +106,10 @@ LunariVM::Result LunariVM::execute_method(LunariScript *p_script, const LunariBy
 	frame.function = function->name;
 	frame.source = p_script->get_path();
 	frame.instance = p_instance;
+	frame.locals["__method"] = p_method;
+	if (function->owner_class != StringName()) {
+		frame.locals["__class"] = function->owner_class;
+	}
 	if (p_initial_locals) {
 		for (const KeyValue<StringName, Variant> &local : *p_initial_locals) {
 			frame.locals[local.key] = local.value;
@@ -138,6 +142,8 @@ LunariVM::Result LunariVM::execute_method(LunariScript *p_script, const LunariBy
 
 	HashMap<int, Array> iter_values;
 	HashMap<int, int> iter_indices;
+	Variant match_subject;
+	bool has_match_subject = false;
 
 	for (int ip = 0; ip < function->instructions.size();) {
 		frame.instruction_pointer = ip;
@@ -247,6 +253,11 @@ LunariVM::Result LunariVM::execute_method(LunariScript *p_script, const LunariBy
 					result.frames.push_back(frame);
 					return result;
 				}
+				if (p_script->has_user_class(instruction.operand_a) && p_script->has_static_field(instruction.operand_a, instruction.operand_b)) {
+					p_script->set_static_field(instruction.operand_a, instruction.operand_b, value);
+					ip++;
+					break;
+				}
 				Variant target_value;
 				if (instruction.operand_a == "self" && p_self.is_null()) {
 					target_value = p_instance->get_owner();
@@ -276,6 +287,97 @@ LunariVM::Result LunariVM::execute_method(LunariScript *p_script, const LunariBy
 				}
 				ip++;
 			} break;
+			case LunariBytecode::OP_AWAIT: {
+				bool valid = false;
+				Variant coroutine_value = p_script->_eval_expression("await " + instruction.operand_a, p_instance, &frame.locals, &valid);
+				if (!valid) {
+					result.error_type = "AwaitError";
+					result.error_line = instruction.line;
+					result.error = vformat("Lunari VM could not evaluate await at line %d.", instruction.line);
+					_lunari_vm_finalize_frame(frame, p_script, p_instance, instruction.line);
+					result.frames.push_back(frame);
+					return result;
+				}
+				frame.locals["__await"] = coroutine_value;
+				Ref<LunariCoroutineState> coroutine = coroutine_value;
+				if (coroutine.is_valid() && !coroutine->is_completed()) {
+					result.ok = true;
+					result.suspended = true;
+					result.return_value = coroutine_value;
+					_lunari_vm_finalize_frame(frame, p_script, p_instance, instruction.line);
+					result.frames.push_back(frame);
+					return result;
+				}
+				ip++;
+			} break;
+			case LunariBytecode::OP_SUPER: {
+				String statement = instruction.operand_a.is_empty() ? String("super") : instruction.operand_a;
+				bool did_return = false;
+				if (!p_script->_execute_statement(statement, p_instance, &frame.locals, p_self, &did_return, &result.return_value)) {
+					result.error_type = "SuperDispatchError";
+					result.error_line = instruction.line;
+					result.error = vformat("Lunari VM super dispatch failed at line %d.", instruction.line);
+					_lunari_vm_finalize_frame(frame, p_script, p_instance, instruction.line);
+					result.frames.push_back(frame);
+					return result;
+				}
+				if (did_return) {
+					result.ok = true;
+					result.returned = true;
+					_lunari_vm_finalize_frame(frame, p_script, p_instance, instruction.line);
+					result.frames.push_back(frame);
+					return result;
+				}
+				ip++;
+			} break;
+			case LunariBytecode::OP_MATCH_BEGIN: {
+				bool valid = false;
+				match_subject = p_script->_eval_expression(instruction.operand_a, p_instance, &frame.locals, &valid);
+				if (!valid) {
+					result.error_type = "MatchError";
+					result.error_line = instruction.line;
+					result.error = vformat("Lunari VM could not evaluate match subject at line %d.", instruction.line);
+					_lunari_vm_finalize_frame(frame, p_script, p_instance, instruction.line);
+					result.frames.push_back(frame);
+					return result;
+				}
+				has_match_subject = true;
+				ip++;
+			} break;
+			case LunariBytecode::OP_MATCH_ARM: {
+				if (!has_match_subject) {
+					result.error_type = "MatchError";
+					result.error_line = instruction.line;
+					result.error = "Lunari VM match arm reached without a match subject.";
+					_lunari_vm_finalize_frame(frame, p_script, p_instance, instruction.line);
+					result.frames.push_back(frame);
+					return result;
+				}
+				String pattern = instruction.operand_a.strip_edges();
+				bool matched = pattern == "_" || pattern == "else";
+				if (!matched) {
+					bool valid = false;
+					Variant pattern_value = p_script->_eval_expression(pattern, p_instance, &frame.locals, &valid);
+					if (!valid) {
+						result.error_type = "MatchError";
+						result.error_line = instruction.line;
+						result.error = vformat("Lunari VM could not evaluate match pattern at line %d.", instruction.line);
+						_lunari_vm_finalize_frame(frame, p_script, p_instance, instruction.line);
+						result.frames.push_back(frame);
+						return result;
+					}
+					Variant compare_result;
+					bool compare_valid = false;
+					Variant::evaluate(Variant::OP_EQUAL, match_subject, pattern_value, compare_result, compare_valid);
+					matched = compare_valid && bool(compare_result);
+				}
+				ip = matched ? ip + 1 : instruction.operand_b.to_int();
+			} break;
+			case LunariBytecode::OP_MATCH_END:
+				match_subject = Variant();
+				has_match_subject = false;
+				ip++;
+				break;
 			case LunariBytecode::OP_CALL:
 			case LunariBytecode::OP_CALL_METHOD:
 			case LunariBytecode::OP_CALL_UTILITY: {

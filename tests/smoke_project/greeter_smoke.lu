@@ -1,18 +1,36 @@
 require "godot"
 
 type UserName = String
+type GreetingText = String
 
 class Greeter
+  enum GreetingStyle { Normal, Loud = 2 }
+
+  const DefaultPunctuation: String = "!"
+  static @created: Integer = 0
+
   @name: UserName
+  @punctuation: String = DefaultPunctuation
 
   attr_reader :name
 
   def initialize(name: UserName): void
     @name = name.capitalize
+    Greeter.@created = Greeter.@created + 1
   end
 
-  def salute: String
-    return "Hello " + @name + "!"
+  def salute: GreetingText
+    return "Hello " + @name + @punctuation
+  end
+end
+
+class LoudGreeter < Greeter
+  def initialize(name: UserName): void
+    super(name)
+  end
+
+  def salute: GreetingText
+    return super.to_upper
   end
 end
 
@@ -20,40 +38,47 @@ class Main :: Node
   signal greeted(message: String)
 
   @label: Label
-  @onready @existing_label: Label = get_node("ExistingLabel")
-  @count: Integer = 0
   @icon: Resource
+  @parent_node: Node
+
   @export @message: String = ""
   @seen_greeting: Boolean = false
-  @parent_node: Node
-  @words: Array<String> = ["Hello", " ", "World!"]
+  @count: Integer = 0
+  @words: Array<String> = ["Hello", " ", "World"]
 
   def ready: void
-    g: Greeter = Greeter.new("world")
+    greeter: Greeter = LoudGreeter.new("world")
+
     @icon = load("res://icon.svg")
+    @parent_node = self.get_parent()
     self.name = "LunariMain"
     self.greeted.connect(self.on_greeted)
-    @parent_node = self.get_parent()
 
     @label = Label.new
     @label.set_position(Vector2(4, 8))
-    if true
-      @label.text = g.salute
-    else
-      @label.text = "bad"
+
+    for word in @words
+      @message = @message + word
+    end
+
+    match @message
+      "Hello World":
+        @message = greeter.salute
+      else:
+        @message = "Greeting failed"
+    end
+
+    if @label is Label
+      typed_label: Label = @label as Label
+      typed_label.text = @message
     end
 
     while @count < 2
       @count = @count + 1
     end
 
-    for word in @words
-      @message = @message + word
-    end
-
     @label.text = @message if @count == 2
     emit_signal("greeted", @message)
-    @existing_label.text = @message
     add_child(@label)
   end
 

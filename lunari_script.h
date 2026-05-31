@@ -30,6 +30,7 @@ class LunariExpressionParser {
 	void _skip_whitespace();
 	bool _match(const String &p_token);
 	bool _peek(const String &p_token) const;
+	bool _peek_keyword(const String &p_keyword) const;
 	String _parse_identifier();
 	Variant _parse_expression(int p_min_precedence = 0);
 	Variant _parse_unary();
@@ -64,6 +65,27 @@ public:
 		HashMap<StringName, Variant>::ConstIterator E = fields.find(p_name);
 		return E ? E->value : Variant();
 	}
+};
+
+class LunariCoroutineState : public RefCounted {
+	GDCLASS(LunariCoroutineState, RefCounted);
+
+	Variant awaited;
+	Variant result;
+	bool completed = false;
+
+protected:
+	static void _bind_methods();
+
+public:
+	void set_awaited(const Variant &p_awaited) { awaited = p_awaited; }
+	Variant get_awaited() const { return awaited; }
+	void set_result(const Variant &p_result) { result = p_result; }
+	Variant get_result() const { return result; }
+	void set_completed(bool p_completed) { completed = p_completed; }
+	bool is_completed() const { return completed; }
+	void resume(const Variant &p_result = Variant());
+	void bind_signal_if_needed();
 };
 
 class LunariScriptInstance : public ScriptInstance {
@@ -113,10 +135,12 @@ public:
 		String hint_string;
 		PropertyUsageFlags usage = PROPERTY_USAGE_DEFAULT;
 		Vector<String> annotations;
+		bool is_static = false;
 	};
 
 	struct UserClassInfo {
 		StringName name;
+		StringName base;
 		Vector<FieldInfo> fields;
 	};
 
@@ -128,6 +152,7 @@ private:
 	Vector<MethodInfo> methods;
 	Vector<MethodInfo> signals;
 	HashMap<StringName, UserClassInfo> user_classes;
+	HashMap<StringName, Variant> static_fields;
 	LunariBytecode bytecode;
 	String compiler_error;
 	bool bytecode_compiled = false;
@@ -194,6 +219,10 @@ public:
 	const Vector<FieldInfo> &get_lunari_fields();
 	const Vector<MethodInfo> &get_lunari_methods();
 	bool has_user_class(const StringName &p_class_name);
+	bool has_static_field(const StringName &p_class_name, const StringName &p_field_name);
+	Variant get_static_field(const StringName &p_class_name, const StringName &p_field_name, bool *r_valid = nullptr);
+	void set_static_field(const StringName &p_class_name, const StringName &p_field_name, const Variant &p_value);
+	Variant call_static_method(const StringName &p_class_name, const StringName &p_method, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr);
 	String disassemble_bytecode();
 	Variant construct_user_class(const StringName &p_class_name, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr);
 	Variant call_user_method(const Ref<LunariObject> &p_object, const StringName &p_method, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr);
@@ -249,6 +278,7 @@ public:
 	Vector<String> get_comment_delimiters() const override;
 	Vector<String> get_doc_comment_delimiters() const override;
 	Vector<String> get_string_delimiters() const override;
+	bool supports_documentation() const override;
 	Ref<Script> make_template(const String &p_template, const String &p_class_name, const String &p_base_class_name) const override;
 	Vector<ScriptTemplate> get_built_in_templates(const StringName &p_object) override;
 	bool is_using_templates() override;

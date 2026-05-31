@@ -8,6 +8,25 @@ static bool _lunari_is_annotation_start(const String &p_line) {
 	if (!p_line.begins_with("@") || p_line.begins_with("@@")) {
 		return false;
 	}
+	int ident_end = 1;
+	while (ident_end < p_line.length()) {
+		char32_t c = p_line[ident_end];
+		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_')) {
+			break;
+		}
+		ident_end++;
+	}
+	const String annotation_name = p_line.substr(1, ident_end - 1);
+	if (annotation_name != "tool" && annotation_name != "export" && annotation_name != "export_range" && annotation_name != "export_enum" && annotation_name != "export_file" && annotation_name != "export_dir" && annotation_name != "onready" && annotation_name != "rpc") {
+		return false;
+	}
+	int next = ident_end;
+	while (next < p_line.length() && (p_line[next] == ' ' || p_line[next] == '\t')) {
+		next++;
+	}
+	if (next < p_line.length() && (p_line[next] == '=' || p_line[next] == '.')) {
+		return false;
+	}
 	if (p_line.contains(":")) {
 		int space = p_line.find(" ");
 		int colon = p_line.find(":");
@@ -774,11 +793,17 @@ LunariParser::Result LunariParser::parse(const String &p_source) const {
 		if (_line_starts_with_keyword(member_line, "abstract")) {
 			member_line = member_line.substr(8).strip_edges();
 		}
+		if (_line_starts_with_keyword(member_line, "static")) {
+			member_line = member_line.substr(6).strip_edges();
+		}
 		if (_line_starts_with_keyword(member_line, "public")) {
 			is_public = true;
 			member_line = member_line.substr(6).strip_edges();
 		} else if (_line_starts_with_keyword(member_line, "private")) {
 			member_line = member_line.substr(7).strip_edges();
+		}
+		if (_line_starts_with_keyword(member_line, "static")) {
+			member_line = member_line.substr(6).strip_edges();
 		}
 
 		if (_line_starts_with_keyword(member_line, "def")) {

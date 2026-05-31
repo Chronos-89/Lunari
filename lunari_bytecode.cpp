@@ -56,6 +56,16 @@ String LunariBytecode::opcode_name(Opcode p_opcode) {
 			return "BREAK";
 		case OP_NEXT:
 			return "NEXT";
+		case OP_AWAIT:
+			return "AWAIT";
+		case OP_MATCH_BEGIN:
+			return "MATCH_BEGIN";
+		case OP_MATCH_ARM:
+			return "MATCH_ARM";
+		case OP_MATCH_END:
+			return "MATCH_END";
+		case OP_SUPER:
+			return "SUPER";
 		case OP_END:
 			return "END";
 	}

@@ -62,6 +62,10 @@ void LunariCodeGen::_emit_statement(const String &p_statement, int p_line, Lunar
 		p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_line, "for", statement.substr(4).strip_edges()));
 		return;
 	}
+	if (statement.find(" if ") > 0 || statement.find(" unless ") > 0) {
+		p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_line, statement));
+		return;
+	}
 	if (statement == "break" || statement == "next" || statement == "redo" || statement == "yield" || statement == "super" || statement.begins_with("super(")) {
 		p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_line, statement));
 		return;
@@ -103,12 +107,20 @@ void LunariCodeGen::_emit_ast_node(const LunariAST::Node &p_node, LunariBytecode
 				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_RETURN, p_node.line, p_node.expression));
 				return;
 			case LunariAST::Node::NODE_ASSIGN:
+				if (p_node.raw.find(" if ") > 0 || p_node.raw.find(" unless ") > 0) {
+					p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_node.line, p_node.raw));
+					return;
+				}
 				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_ASSIGN, p_node.line, p_node.name, p_node.value));
 				return;
 			case LunariAST::Node::NODE_LOCAL_ASSIGN:
 				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_LOCAL_ASSIGN, p_node.line, p_node.name, p_node.type, p_node.value));
 				return;
 			case LunariAST::Node::NODE_PROPERTY_ASSIGN:
+				if (p_node.raw.find(" if ") > 0 || p_node.raw.find(" unless ") > 0) {
+					p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_node.line, p_node.raw));
+					return;
+				}
 				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_SET_PROPERTY, p_node.line, p_node.target, p_node.name, p_node.value));
 				return;
 			case LunariAST::Node::NODE_CALL:
@@ -161,14 +173,38 @@ void LunariCodeGen::_emit_ast_node(const LunariAST::Node &p_node, LunariBytecode
 				return;
 			case LunariAST::Node::NODE_REDO:
 			case LunariAST::Node::NODE_YIELD:
-			case LunariAST::Node::NODE_SUPER:
-			case LunariAST::Node::NODE_AWAIT:
 				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_node.line, LunariAST::kind_name(p_node.kind).to_lower(), p_node.expression));
 				return;
-			case LunariAST::Node::NODE_MATCH:
+			case LunariAST::Node::NODE_SUPER:
+				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_SUPER, p_node.line, p_node.expression));
+				return;
+			case LunariAST::Node::NODE_AWAIT:
+				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_AWAIT, p_node.line, p_node.expression));
+				return;
+			case LunariAST::Node::NODE_MATCH: {
+				int match_begin = p_function->instructions.size();
+				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_MATCH_BEGIN, p_node.line, p_node.expression));
+				Vector<int> end_jumps;
+				for (const LunariAST::Node &arm : p_node.children) {
+					if (arm.kind != LunariAST::Node::NODE_MATCH_ARM) {
+						continue;
+					}
+					int arm_ip = p_function->instructions.size();
+					p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_MATCH_ARM, arm.line, arm.expression));
+					_emit_ast_block(arm.children, r_bytecode, p_function, r_current_class);
+					int jump_end = p_function->instructions.size();
+					p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_JUMP, arm.line));
+					p_function->instructions.write[arm_ip].operand_b = itos(p_function->instructions.size());
+					end_jumps.push_back(jump_end);
+				}
+				p_function->instructions.write[match_begin].operand_b = itos(p_function->instructions.size());
+				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_MATCH_END, p_node.line));
+				for (int jump_ip : end_jumps) {
+					p_function->instructions.write[jump_ip].operand_a = itos(p_function->instructions.size() - 1);
+				}
+				return;
+			}
 			case LunariAST::Node::NODE_MATCH_ARM:
-				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_node.line, LunariAST::kind_name(p_node.kind).to_lower(), p_node.expression));
-				_emit_ast_block(p_node.children, r_bytecode, p_function, r_current_class);
 				return;
 			case LunariAST::Node::NODE_EXPRESSION:
 			case LunariAST::Node::NODE_UNKNOWN:

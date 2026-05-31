@@ -92,9 +92,15 @@ private:
 	HashMap<StringName, StringName> type_aliases;
 	HashMap<StringName, StringName> constant_types;
 	HashMap<StringName, HashMap<StringName, int64_t>> enum_values;
+	HashMap<StringName, StringName> class_bases;
 	HashMap<StringName, HashMap<StringName, StringName>> class_method_returns;
 	HashMap<StringName, HashMap<StringName, Method>> class_methods;
 	HashMap<StringName, HashMap<StringName, StringName>> class_field_types;
+	HashMap<StringName, HashSet<StringName>> class_private_members;
+	HashMap<StringName, HashSet<StringName>> class_abstract_methods;
+	HashMap<String, Vector<String>> dependency_graph;
+	HashSet<String> dependency_visit_stack;
+	HashSet<String> dependency_visited;
 
 	static bool _line_starts_with_keyword(const String &p_line, const String &p_keyword);
 	static bool _is_identifier(const String &p_value);
@@ -106,6 +112,7 @@ private:
 	static bool _parse_parameter(const String &p_text, int p_line_number, Parameter &r_parameter, String *r_error = nullptr);
 	static String _strip_instance_prefix(const StringName &p_name);
 	bool _is_known_type(const StringName &p_type) const;
+	StringName _resolve_type_alias(const StringName &p_type) const;
 	static bool _is_assignable(const StringName &p_target_type, const StringName &p_source_type);
 	static Variant _parse_literal(const String &p_value, const StringName &p_type, bool *r_valid = nullptr);
 	static StringName _type_from_property_info(const PropertyInfo &p_info, bool p_nil_as_void = false);
@@ -117,6 +124,16 @@ private:
 	bool _validate_signal_emit(const String &p_statement, int p_line_number);
 	bool _validate_global_call(const StringName &p_function_name, const Vector<String> &p_arg_expressions, int p_line_number);
 	bool _validate_native_method_override(const Method &p_method, int p_line);
+	bool _is_lunari_subclass(const StringName &p_class, const StringName &p_base) const;
+	bool _is_private_member(const StringName &p_owner_type, const StringName &p_member) const;
+	void _collect_dependencies(const Vector<LunariAST::Node> &p_nodes);
+	void _collect_expression_dependencies(const String &p_expression, int p_line);
+	void _validate_dependency_cycles();
+	bool _visit_dependency(const String &p_path);
+	void _validate_inheritance_contracts();
+	void _validate_captures(const Vector<LunariAST::Node> &p_nodes, const Method &p_method);
+	void _apply_type_narrowing(const String &p_condition, HashMap<StringName, StringName> *r_true_types, HashMap<StringName, StringName> *r_false_types) const;
+	bool _match_is_exhaustive(const LunariAST::Node &p_match, const TypeInfo &p_subject_type) const;
 	StringName _collection_element_type(const StringName &p_collection_type) const;
 	bool _has_guaranteed_return(const Vector<LunariAST::Node> &p_nodes) const;
 	void _merge_branch_locals(const HashMap<StringName, StringName> &p_before, const HashMap<StringName, StringName> &p_true_branch, const HashMap<StringName, StringName> &p_false_branch);

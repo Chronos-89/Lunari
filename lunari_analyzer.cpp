@@ -10,6 +10,8 @@
 
 #include "core/math/vector2.h"
 #include "core/math/vector3.h"
+#include "core/io/file_access.h"
+#include "core/io/resource_loader.h"
 #include "core/object/class_db.h"
 #include "core/string/ustring.h"
 
@@ -277,6 +279,16 @@ bool LunariAnalyzer::_is_known_type(const StringName &p_type) const {
 	return LunariGodotApi::has_class(type);
 }
 
+StringName LunariAnalyzer::_resolve_type_alias(const StringName &p_type) const {
+	StringName type = _normalize_type_name(p_type);
+	HashSet<StringName> seen;
+	while (type_aliases.has(type) && !seen.has(type)) {
+		seen.insert(type);
+		type = _normalize_type_name(type_aliases[type]);
+	}
+	return type;
+}
+
 bool LunariAnalyzer::_is_assignable(const StringName &p_target_type, const StringName &p_source_type) {
 	StringName target_type = _normalize_type_name(p_target_type);
 	StringName source_type = _normalize_type_name(p_source_type);
@@ -325,6 +337,12 @@ bool LunariAnalyzer::_is_assignable(const StringName &p_target_type, const Strin
 		return target_type == "nil";
 	}
 	if (target_type == "Numeric" && (source_type == "int" || source_type == "float")) {
+		return true;
+	}
+	if ((target_type == "symbol" || target_type == "StringName") && source_type == "string") {
+		return true;
+	}
+	if (target_type == "NodePath" && source_type == "string") {
 		return true;
 	}
 	if (target_type == "Object" && source_type != "void" && source_type != "never" && source_type != "nil") {
@@ -744,6 +762,226 @@ bool LunariAnalyzer::_validate_native_method_override(const Method &p_method, in
 	return true;
 }
 
+bool LunariAnalyzer::_is_lunari_subclass(const StringName &p_class, const StringName &p_base) const {
+	if (p_class == p_base) {
+		return true;
+	}
+	StringName current = p_class;
+	HashSet<StringName> seen;
+	while (class_bases.has(current) && !seen.has(current)) {
+		seen.insert(current);
+		current = class_bases[current];
+		if (current == p_base) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool LunariAnalyzer::_is_private_member(const StringName &p_owner_type, const StringName &p_member) const {
+	HashMap<StringName, HashSet<StringName>>::ConstIterator Members = class_private_members.find(p_owner_type);
+	return Members && Members->value.has(p_member);
+}
+
+void LunariAnalyzer::_collect_expression_dependencies(const String &p_expression, int p_line) {
+	String expression = p_expression.strip_edges();
+	if (path.is_empty() || expression.is_empty()) {
+		return;
+	}
+	if ((expression.begins_with("load(") || expression.begins_with("preload(")) && expression.ends_with(")")) {
+		String args = expression.substr(expression.find("(") + 1, expression.length() - expression.find("(") - 2).strip_edges();
+		if ((args.begins_with("\"") && args.ends_with("\"")) || (args.begins_with("'") && args.ends_with("'"))) {
+			String dependency = args.substr(1, args.length() - 2);
+			if (dependency.ends_with(".lu") || dependency.ends_with(".tscn") || dependency.ends_with(".tres") || dependency.ends_with(".res")) {
+				dependency_graph[path].push_back(dependency);
+			}
+		}
+	}
+}
+
+void LunariAnalyzer::_collect_dependencies(const Vector<LunariAST::Node> &p_nodes) {
+	for (const LunariAST::Node &node : p_nodes) {
+		if (node.kind == LunariAST::Node::NODE_REQUIRE) {
+			String dependency = node.value.strip_edges();
+			if ((dependency.begins_with("\"") && dependency.ends_with("\"")) || (dependency.begins_with("'") && dependency.ends_with("'"))) {
+				dependency = dependency.substr(1, dependency.length() - 2);
+			}
+			if (dependency != "godot" && !path.is_empty()) {
+				if (!dependency.ends_with(".lu")) {
+					dependency += ".lu";
+				}
+				if (!dependency.begins_with("res://") && path.begins_with("res://")) {
+					dependency = path.get_base_dir().path_join(dependency);
+				}
+				dependency_graph[path].push_back(dependency);
+				if (dependency.ends_with(".lu") && !dependency_graph.has(dependency) && FileAccess::exists(dependency)) {
+					Error err = OK;
+					String dependency_source = FileAccess::get_file_as_string(dependency, &err);
+					if (err == OK) {
+						LunariParser parser;
+						LunariAST::Document dependency_document = parser.parse_ast(dependency_source);
+						String previous_path = path;
+						path = dependency;
+						_collect_ast_types(dependency_document.children);
+						_collect_ast_members(dependency_document.children);
+						_collect_dependencies(dependency_document.children);
+						path = previous_path;
+					}
+				}
+			}
+		}
+		_collect_expression_dependencies(node.expression, node.line);
+		_collect_expression_dependencies(node.value, node.line);
+		_collect_dependencies(node.children);
+		_collect_dependencies(node.else_children);
+	}
+}
+
+bool LunariAnalyzer::_visit_dependency(const String &p_path) {
+	if (dependency_visit_stack.has(p_path)) {
+		_add_error(1, vformat("circular Lunari dependency detected at '%s'.", p_path));
+		return false;
+	}
+	if (dependency_visited.has(p_path)) {
+		return true;
+	}
+	dependency_visit_stack.insert(p_path);
+	HashMap<String, Vector<String>>::Iterator Deps = dependency_graph.find(p_path);
+	if (Deps) {
+		for (const String &dependency : Deps->value) {
+			if (!_visit_dependency(dependency)) {
+				return false;
+			}
+		}
+	}
+	dependency_visit_stack.erase(p_path);
+	dependency_visited.insert(p_path);
+	return true;
+}
+
+void LunariAnalyzer::_validate_dependency_cycles() {
+	dependency_visit_stack.clear();
+	dependency_visited.clear();
+	for (const KeyValue<String, Vector<String>> &entry : dependency_graph) {
+		_visit_dependency(entry.key);
+	}
+}
+
+void LunariAnalyzer::_validate_inheritance_contracts() {
+	for (const KeyValue<StringName, StringName> &base_pair : class_bases) {
+		const StringName klass = base_pair.key;
+		const StringName base = base_pair.value;
+		if (user_classes.has(base) && _is_lunari_subclass(base, klass)) {
+			_add_error(1, vformat("class inheritance cycle between '%s' and '%s'.", klass, base));
+			continue;
+		}
+		HashMap<StringName, HashSet<StringName>>::Iterator Abstract = class_abstract_methods.find(base);
+		if (!Abstract || abstract_classes.has(klass)) {
+			continue;
+		}
+		HashMap<StringName, HashMap<StringName, Method>>::Iterator Methods = class_methods.find(klass);
+		for (const StringName &abstract_method : Abstract->value) {
+			if (!Methods || !Methods->value.has(abstract_method)) {
+				_add_error(1, vformat("class '%s' must implement abstract method '%s' from '%s'.", klass, abstract_method, base));
+			}
+		}
+	}
+}
+
+void LunariAnalyzer::_validate_captures(const Vector<LunariAST::Node> &p_nodes, const Method &p_method) {
+	for (const LunariAST::Node &node : p_nodes) {
+		if (node.raw.contains("->") || node.raw.contains("Proc.new") || node.raw.contains("lambda")) {
+			for (const KeyValue<StringName, StringName> &local : local_type_map) {
+				if (String(local.key).is_empty()) {
+					continue;
+				}
+				if (node.raw.contains(String(local.key))) {
+					// Captures are legal, but they must be known and stable at the capture site.
+					if (local.value == StringName()) {
+						_add_error(node.line, vformat("lambda captures local '%s' before its type is known.", local.key));
+					}
+				}
+			}
+		}
+		_validate_captures(node.children, p_method);
+		_validate_captures(node.else_children, p_method);
+	}
+}
+
+void LunariAnalyzer::_apply_type_narrowing(const String &p_condition, HashMap<StringName, StringName> *r_true_types, HashMap<StringName, StringName> *r_false_types) const {
+	ERR_FAIL_NULL(r_true_types);
+	String condition = p_condition.strip_edges();
+	int is_pos = condition.find(" is ");
+	if (is_pos > 0) {
+		StringName name = condition.substr(0, is_pos).strip_edges();
+		StringName narrowed_type = _normalize_type_name(condition.substr(is_pos + 4).strip_edges());
+		if (local_type_map.has(name) && _is_known_type(narrowed_type)) {
+			(*r_true_types)[name] = narrowed_type;
+			if (r_false_types && String(local_type_map[name]).contains("|")) {
+				Vector<String> parts = _split_top_level(local_type_map[name], '|');
+				String remaining;
+				for (const String &part : parts) {
+					String clean = part.strip_edges();
+					if (clean != narrowed_type) {
+						if (!remaining.is_empty()) {
+							remaining += " | ";
+						}
+						remaining += clean;
+					}
+				}
+				if (!remaining.is_empty()) {
+					(*r_false_types)[name] = _normalize_type_name(remaining);
+				}
+			}
+		}
+	}
+}
+
+bool LunariAnalyzer::_match_is_exhaustive(const LunariAST::Node &p_match, const TypeInfo &p_subject_type) const {
+	bool saw_else = false;
+	HashSet<String> covered_literals;
+	for (const LunariAST::Node &arm : p_match.children) {
+		if (arm.kind != LunariAST::Node::NODE_MATCH_ARM) {
+			continue;
+		}
+		String pattern = arm.expression.strip_edges();
+		if (pattern == "else" || pattern == "_") {
+			saw_else = true;
+			break;
+		}
+		covered_literals.insert(pattern);
+	}
+	if (saw_else) {
+		return true;
+	}
+	if (!p_subject_type.known) {
+		return false;
+	}
+	String subject = p_subject_type.name;
+	if (subject == "bool") {
+		return covered_literals.has("true") && covered_literals.has("false");
+	}
+	if (subject.contains("|")) {
+		for (const String &part : _split_top_level(subject, '|')) {
+			String clean = part.strip_edges();
+			if (!covered_literals.has(clean) && !covered_literals.has("\"" + clean + "\"") && !covered_literals.has("'" + clean + "'")) {
+				return false;
+			}
+		}
+		return true;
+	}
+	HashMap<StringName, HashMap<StringName, int64_t>>::ConstIterator Enum = enum_values.find(p_subject_type.name);
+	if (Enum) {
+		for (const KeyValue<StringName, int64_t> &value : Enum->value) {
+			if (!covered_literals.has(String(p_subject_type.name) + "." + String(value.key)) && !covered_literals.has(value.key)) {
+				return false;
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
 StringName LunariAnalyzer::_collection_element_type(const StringName &p_collection_type) const {
 	String type = _normalize_type_name(p_collection_type);
 	if (type.ends_with("[]")) {
@@ -1139,6 +1377,17 @@ LunariAnalyzer::TypeInfo LunariAnalyzer::_infer_expression_type(const String &p_
 	if (expression == "self") {
 		return { result.native_base, true, false };
 	}
+	if (expression == "super" || expression.begins_with("super(")) {
+		return { "Variant", true, false };
+	}
+	if (expression.find(" is ") > 0) {
+		return { "bool", true, false };
+	}
+	int as_pos = expression.find(" as ");
+	if (as_pos > 0) {
+		StringName cast_type = _normalize_type_name(expression.substr(as_pos + 4).strip_edges());
+		return { cast_type, _is_known_type(cast_type), false };
+	}
 	if (expression.begins_with("await ")) {
 		String awaited = expression.substr(6).strip_edges();
 		TypeInfo awaited_type = _infer_expression_type(awaited, p_line_number);
@@ -1224,6 +1473,16 @@ LunariAnalyzer::TypeInfo LunariAnalyzer::_infer_expression_type(const String &p_
 	if (class_constant_dot > 0 && class_constant_dot == expression.rfind(".")) {
 		String class_name = expression.substr(0, class_constant_dot).strip_edges();
 		String constant_name = expression.substr(class_constant_dot + 1).strip_edges();
+		HashMap<StringName, HashMap<StringName, StringName>>::ConstIterator ClassFields = class_field_types.find(class_name);
+		if (ClassFields) {
+			HashMap<StringName, StringName>::ConstIterator Field = ClassFields->value.find(constant_name);
+			if (!Field && !constant_name.begins_with("@")) {
+				Field = ClassFields->value.find("@" + constant_name);
+			}
+			if (Field) {
+				return { Field->value, true, false };
+			}
+		}
 		HashMap<StringName, HashMap<StringName, int64_t>>::ConstIterator Enum = enum_values.find(class_name);
 		if (Enum && Enum->value.has(constant_name)) {
 			return { StringName(class_name), true, false };
@@ -1257,7 +1516,7 @@ LunariAnalyzer::TypeInfo LunariAnalyzer::_infer_expression_type(const String &p_
 	if (expression.ends_with(".capitalize()") || expression.ends_with(".capitalize") || expression.ends_with(".to_upper()") || expression.ends_with(".to_upper") || expression.ends_with(".to_lower()") || expression.ends_with(".to_lower")) {
 		String base = expression.get_slice(".", 0).strip_edges();
 		TypeInfo base_type = _infer_expression_type(base, p_line_number);
-		if (base_type.known && base_type.name == "string") {
+		if (base_type.known && _resolve_type_alias(base_type.name) == "string") {
 			return { "string", true, false };
 		}
 	}
@@ -1292,6 +1551,22 @@ LunariAnalyzer::TypeInfo LunariAnalyzer::_infer_expression_type(const String &p_
 			if (return_type != StringName()) {
 				return { return_type, true, false };
 			}
+			HashMap<StringName, HashMap<StringName, StringName>>::ConstIterator ClassFields = class_field_types.find(base_type.name);
+			if (ClassFields) {
+				HashMap<StringName, StringName>::ConstIterator Field = ClassFields->value.find(method);
+				if (!Field && !method.begins_with("@")) {
+					Field = ClassFields->value.find("@" + method);
+				}
+				if (Field) {
+					return { Field->value, true, false };
+				}
+			}
+		}
+		if (base == "self" && signal_map.has(method)) {
+			return { "Signal", true, false };
+		}
+		if ((base_type.name == "Signal" || base_type.name == "Callable") && (method == "connect" || method == "disconnect" || method == "emit" || method == "call")) {
+			return { method == "call" ? StringName("Variant") : StringName("void"), true, false };
 		}
 		if (base_type.known && LunariGodotApi::has_class(base_type.name)) {
 			StringName property_type;
@@ -1382,6 +1657,8 @@ LunariAnalyzer::TypeInfo LunariAnalyzer::_infer_expression_type(const String &p_
 	if (expression.find("+") >= 0) {
 		Vector<String> parts = expression.split("+");
 		bool any_string = false;
+		bool any_float = false;
+		bool all_numeric = true;
 		bool all_known = true;
 		for (const String &part : parts) {
 			TypeInfo part_type = _infer_expression_type(part.strip_edges(), p_line_number);
@@ -1389,12 +1666,21 @@ LunariAnalyzer::TypeInfo LunariAnalyzer::_infer_expression_type(const String &p_
 				all_known = false;
 				break;
 			}
-			if (part_type.name == "string") {
+			StringName resolved_type = _resolve_type_alias(part_type.name);
+			if (resolved_type == "string") {
 				any_string = true;
+				all_numeric = false;
+			} else if (resolved_type == "float") {
+				any_float = true;
+			} else if (resolved_type != "int") {
+				all_numeric = false;
 			}
 		}
 		if (all_known && any_string) {
 			return { "string", true, false };
+		}
+		if (all_known && all_numeric) {
+			return { any_float ? StringName("float") : StringName("int"), true, false };
 		}
 		return { "float", true, false };
 	}
@@ -1495,8 +1781,13 @@ bool LunariAnalyzer::_validate_call_arguments(const StringName &p_owner_type, co
 		_add_error(p_line_number, vformat("method '%s.%s' expects %d-%d arguments, got %d.", p_owner_type, p_method_name, p_required_args, p_arg_types.size(), p_arg_expressions.size()));
 		return false;
 	}
+	HashMap<StringName, StringName> inferred_generics;
 	for (int i = 0; i < p_arg_expressions.size() && i < p_arg_types.size(); i++) {
-		if (p_arg_types[i] == "Variant" || p_arg_types[i] == "any") {
+		StringName expected_type = p_arg_types[i];
+		if (type_parameters.has(expected_type) && inferred_generics.has(expected_type)) {
+			expected_type = inferred_generics[expected_type];
+		}
+		if (expected_type == "Variant" || expected_type == "any") {
 			continue;
 		}
 		TypeInfo arg_type = _infer_expression_type(p_arg_expressions[i], p_line_number);
@@ -1504,8 +1795,12 @@ bool LunariAnalyzer::_validate_call_arguments(const StringName &p_owner_type, co
 			_add_error(p_line_number, vformat("could not infer argument %d for '%s.%s'.", i + 1, p_owner_type, p_method_name));
 			return false;
 		}
-		if (!_is_assignable(p_arg_types[i], arg_type.name)) {
-			_add_error(p_line_number, vformat("argument %d of '%s.%s' expects '%s', got '%s'.", i + 1, p_owner_type, p_method_name, p_arg_types[i], arg_type.name));
+		if (type_parameters.has(expected_type)) {
+			inferred_generics[expected_type] = arg_type.name;
+			continue;
+		}
+		if (!_is_assignable(expected_type, arg_type.name)) {
+			_add_error(p_line_number, vformat("argument %d of '%s.%s' expects '%s', got '%s'.", i + 1, p_owner_type, p_method_name, expected_type, arg_type.name));
 			return false;
 		}
 	}
@@ -1521,7 +1816,7 @@ bool LunariAnalyzer::_validate_call_expression(const String &p_expression, int p
 	if (paren < 0) {
 		return true;
 	}
-	int method_dot = expression.rfind(".");
+	int method_dot = expression.substr(0, paren).rfind(".");
 	String method_name;
 	String args_text = expression.substr(paren + 1, expression.length() - paren - 2).strip_edges();
 	Vector<String> args = args_text.is_empty() ? Vector<String>() : _split_top_level(args_text, ',');
@@ -1570,6 +1865,10 @@ bool LunariAnalyzer::_validate_call_expression(const String &p_expression, int p
 				_add_error(p_line_number, vformat("unknown method '%s' on type '%s'.", method_name, base_type.name));
 				return false;
 			}
+			if (_is_private_member(base_type.name, method_name) && base_type.name != result.class_name) {
+				_add_error(p_line_number, vformat("private method '%s' cannot be called on '%s'.", method_name, base_type.name));
+				return false;
+			}
 			Vector<StringName> arg_types;
 			int required_args = 0;
 			for (const Parameter &parameter : method->parameters) {
@@ -1593,6 +1892,11 @@ bool LunariAnalyzer::_validate_call_expression(const String &p_expression, int p
 	}
 
 	method_name = expression.substr(0, paren).strip_edges();
+	if (method_name == "emit_signal") {
+		int previous_error_count = result.diagnostics.size();
+		_validate_signal_emit(expression, p_line_number);
+		return result.diagnostics.size() == previous_error_count;
+	}
 	if (method_names.has(method_name)) {
 		const Method *method = _find_user_method(result.class_name, method_name);
 		if (!method) {
@@ -1613,7 +1917,7 @@ bool LunariAnalyzer::_validate_call_expression(const String &p_expression, int p
 		const int required_args = owner_method.info.arguments.size() - owner_method.info.default_arguments.size();
 		return _validate_call_arguments(result.native_base, method_name, args, owner_method.argument_types, required_args, p_line_number);
 	}
-	if (LunariUtilityFunctions::function_exists(method_name) || Variant::has_utility_function(method_name) || method_name == "load" || method_name == "preload" || method_name == "emit_signal" || method_name == "get_node" || method_name == "Callable") {
+	if (LunariUtilityFunctions::function_exists(method_name) || Variant::has_utility_function(method_name) || method_name == "load" || method_name == "preload" || method_name == "get_node" || method_name == "Callable") {
 		return _validate_global_call(method_name, args, p_line_number);
 	}
 	_add_error(p_line_number, vformat("unknown function or method '%s'.", method_name));
@@ -1643,11 +1947,16 @@ void LunariAnalyzer::_analyze_return_statement(const String &p_statement, int p_
 		return;
 	}
 	TypeInfo expression_type = _infer_expression_type(expression, p_line_number);
+	if (expression == "super" || expression.begins_with("super(")) {
+		expression_type = { return_type, true, false };
+	} else if (expression.begins_with("super.")) {
+		expression_type = { return_type, true, false };
+	}
 	if (!expression_type.known) {
 		_add_error(p_line_number, vformat("could not infer return expression type for method '%s'.", p_method.name));
 		return;
 	}
-	if (!_is_assignable(return_type, expression_type.name)) {
+	if (!_is_assignable(return_type, expression_type.name) && !_is_assignable(_resolve_type_alias(return_type), _resolve_type_alias(expression_type.name)) && !_is_lunari_subclass(expression_type.name, return_type)) {
 		_add_error(p_line_number, vformat("method '%s' must return '%s', got '%s'.", p_method.name, return_type, expression_type.name));
 	}
 }
@@ -1744,6 +2053,12 @@ void LunariAnalyzer::_collect_ast_types(const Vector<LunariAST::Node> &p_nodes) 
 					_add_error(node.line, "module name must be a valid identifier.");
 				} else {
 					module_names.insert(node.name);
+					for (const String &param : _split_top_level(node.type, ',')) {
+						String clean = param.strip_edges();
+						if (!clean.is_empty()) {
+							type_parameters.insert(clean);
+						}
+					}
 				}
 				_collect_ast_types(node.children);
 				break;
@@ -1753,6 +2068,12 @@ void LunariAnalyzer::_collect_ast_types(const Vector<LunariAST::Node> &p_nodes) 
 					_add_error(node.line, "class name must be a valid identifier.");
 				} else {
 					user_classes.insert(node.name);
+					for (const String &param : _split_top_level(node.type, ',')) {
+						String clean = param.strip_edges();
+						if (!clean.is_empty()) {
+							type_parameters.insert(clean);
+						}
+					}
 					for (const String &annotation : node.annotations) {
 						if (_lunari_annotation_name(annotation) == "tool") {
 							result.is_tool = true;
@@ -1762,6 +2083,7 @@ void LunariAnalyzer::_collect_ast_types(const Vector<LunariAST::Node> &p_nodes) 
 						abstract_classes.insert(node.name);
 					}
 					if (node.base != StringName()) {
+						class_bases[node.name] = _normalize_type_name(node.base);
 						result.class_name = node.name;
 						result.native_base = _normalize_type_name(node.base);
 					}
@@ -1912,7 +2234,8 @@ void LunariAnalyzer::_collect_ast_members(const Vector<LunariAST::Node> &p_nodes
 			}
 			if (!field.default_expression.is_empty()) {
 				TypeInfo default_type = _infer_expression_type(field.default_expression, node.line);
-				if (default_type.known && !_is_assignable(field.type, default_type.name)) {
+				const bool typed_onready_node = field.is_onready && (field.default_expression.begins_with("$") || field.default_expression.begins_with("%")) && LunariGodotApi::has_class(field.type) && LunariGodotApi::inherits(field.type, "Node") && default_type.name == "Node";
+				if (default_type.known && !_is_assignable(field.type, default_type.name) && !_is_assignable(_resolve_type_alias(field.type), _resolve_type_alias(default_type.name)) && !typed_onready_node) {
 					_add_error(node.line, vformat("cannot assign default '%s' to field '%s' of type '%s'.", default_type.name, field.name, field.type));
 					continue;
 				}
@@ -1922,6 +2245,10 @@ void LunariAnalyzer::_collect_ast_members(const Vector<LunariAST::Node> &p_nodes
 				}
 			}
 			class_field_types[p_owner_class][field.name] = field.type;
+			if (node.is_private) {
+				class_private_members[p_owner_class].insert(field.name);
+				class_private_members[p_owner_class].insert(_strip_instance_prefix(field.name));
+			}
 			if (p_owner_class == result.class_name) {
 				if (field_map.has(field.name)) {
 					_add_error(node.line, vformat("duplicate member '%s'.", field.name));
@@ -1980,6 +2307,12 @@ void LunariAnalyzer::_collect_ast_members(const Vector<LunariAST::Node> &p_nodes
 			}
 			class_method_returns[p_owner_class][method.name] = method.return_type;
 			class_methods[p_owner_class][method.name] = method;
+			if (node.is_private) {
+				class_private_members[p_owner_class].insert(method.name);
+			}
+			if (node.is_abstract) {
+				class_abstract_methods[p_owner_class].insert(method.name);
+			}
 			if (p_owner_class == result.class_name) {
 				if (!_validate_native_method_override(method, node.line)) {
 					continue;
@@ -2035,7 +2368,7 @@ void LunariAnalyzer::_analyze_ast_node(const LunariAST::Node &p_node, const Meth
 				_add_error(p_node.line, vformat("could not infer expression type for local '%s'.", p_node.name));
 				return;
 			}
-			if (!_is_assignable(local_type, rhs.name)) {
+			if (!_is_assignable(local_type, rhs.name) && !_is_assignable(_resolve_type_alias(local_type), _resolve_type_alias(rhs.name)) && !_is_lunari_subclass(rhs.name, local_type)) {
 				_add_error(p_node.line, vformat("cannot assign '%s' to local '%s' of type '%s'.", rhs.name, p_node.name, local_type));
 				return;
 			}
@@ -2043,6 +2376,10 @@ void LunariAnalyzer::_analyze_ast_node(const LunariAST::Node &p_node, const Meth
 			return;
 		}
 		case LunariAST::Node::NODE_ASSIGN: {
+			if (String(p_node.name).contains(".")) {
+				_analyze_statement(p_node.raw, p_node.line, p_method);
+				return;
+			}
 			if (!field_map.has(p_node.name) && !local_type_map.has(p_node.name)) {
 				_add_error(p_node.line, vformat("assignment target '%s' is not a declared field or local.", p_node.name));
 				return;
@@ -2053,7 +2390,7 @@ void LunariAnalyzer::_analyze_ast_node(const LunariAST::Node &p_node, const Meth
 				_add_error(p_node.line, vformat("could not infer expression type for assignment to '%s'.", p_node.name));
 				return;
 			}
-			if (!_is_assignable(target_type, rhs.name)) {
+			if (!_is_assignable(target_type, rhs.name) && !_is_assignable(_resolve_type_alias(target_type), _resolve_type_alias(rhs.name)) && !_is_lunari_subclass(rhs.name, target_type)) {
 				_add_error(p_node.line, vformat("cannot assign '%s' to '%s' of type '%s'.", rhs.name, p_node.name, target_type));
 			}
 			return;
@@ -2070,10 +2407,19 @@ void LunariAnalyzer::_analyze_ast_node(const LunariAST::Node &p_node, const Meth
 				_add_error(p_node.line, vformat("condition should be bool-like, got '%s'.", condition.name));
 			}
 			HashMap<StringName, StringName> before_locals = local_type_map;
+			HashMap<StringName, StringName> true_narrowing;
+			HashMap<StringName, StringName> false_narrowing;
+			_apply_type_narrowing(p_node.expression, &true_narrowing, &false_narrowing);
+			for (const KeyValue<StringName, StringName> &narrowed : true_narrowing) {
+				local_type_map[narrowed.key] = narrowed.value;
+			}
 			_analyze_ast_block(p_node.children, p_method);
 			HashMap<StringName, StringName> true_locals = local_type_map;
 			local_type_map = before_locals;
 			if (!p_node.else_children.is_empty()) {
+				for (const KeyValue<StringName, StringName> &narrowed : false_narrowing) {
+					local_type_map[narrowed.key] = narrowed.value;
+				}
 				_analyze_ast_block(p_node.else_children, p_method);
 				HashMap<StringName, StringName> false_locals = local_type_map;
 				_merge_branch_locals(before_locals, true_locals, false_locals);
@@ -2139,8 +2485,8 @@ void LunariAnalyzer::_analyze_ast_node(const LunariAST::Node &p_node, const Meth
 				_analyze_ast_node(arm, p_method);
 			}
 			local_type_map = before_locals;
-			if (!saw_else && !p_node.children.is_empty()) {
-				// Non-exhaustive matches are warnings in GDScript; Lunari stores them as diagnostics for now.
+			if (!saw_else && !p_node.children.is_empty() && !_match_is_exhaustive(p_node, subject)) {
+				_add_error(p_node.line, "match expression is not exhaustive; add an 'else:' arm.");
 			}
 			return;
 		}
@@ -2179,6 +2525,7 @@ void LunariAnalyzer::_analyze_ast_method(const LunariAST::Node &p_method) {
 	for (const Parameter &parameter : method.parameters) {
 		local_type_map[parameter.name] = parameter.is_rest ? StringName("Array<" + String(parameter.type) + ">") : parameter.type;
 	}
+	_validate_captures(p_method.children, method);
 	_analyze_ast_block(p_method.children, method);
 	if (method.return_type != StringName() && method.return_type != "void" && method.return_type != "nil" && !_has_guaranteed_return(p_method.children)) {
 		_add_error(p_method.line, vformat("method '%s' must return '%s' on all code paths.", method.name, method.return_type));
@@ -2233,10 +2580,13 @@ void LunariAnalyzer::_analyze_ast_document(const LunariAST::Document &p_document
 		_add_error(1, diagnostic);
 	}
 	_collect_ast_types(p_document.children);
+	_collect_dependencies(p_document.children);
+	_validate_dependency_cycles();
 	if (result.class_name == StringName()) {
 		result.class_name = path.is_empty() ? StringName("LunariScript") : StringName(path.get_file().get_basename().to_pascal_case());
 	}
 	_collect_ast_members(p_document.children);
+	_validate_inheritance_contracts();
 	_analyze_ast_class_methods(p_document.children);
 }
 
@@ -2335,6 +2685,29 @@ void LunariAnalyzer::_analyze_statement(const String &p_statement, int p_line_nu
 			_add_error(p_line_number, "property assignment must use '='.");
 			return;
 		}
+		if (user_classes.has(field_name)) {
+			HashMap<StringName, HashMap<StringName, StringName>>::ConstIterator ClassFields = class_field_types.find(field_name);
+			HashMap<StringName, StringName>::ConstIterator StaticField;
+			if (ClassFields) {
+				StaticField = ClassFields->value.find(property_name);
+				if (!StaticField && !property_name.begins_with("@")) {
+					StaticField = ClassFields->value.find("@" + property_name);
+				}
+			}
+			if (!StaticField) {
+				_add_error(p_line_number, vformat("unknown static field '%s.%s'.", field_name, property_name));
+				return;
+			}
+			TypeInfo rhs = _infer_expression_type(statement.substr(property_equals + 1), p_line_number);
+			if (!rhs.known) {
+				_add_error(p_line_number, vformat("could not infer expression type for static field '%s.%s'.", field_name, property_name));
+				return;
+			}
+			if (!_is_assignable(StaticField->value, rhs.name) && !_is_assignable(_resolve_type_alias(StaticField->value), _resolve_type_alias(rhs.name))) {
+				_add_error(p_line_number, vformat("cannot assign '%s' to static field '%s.%s' of type '%s'.", rhs.name, field_name, property_name, StaticField->value));
+			}
+			return;
+		}
 		if (field_name == "self") {
 			field_name = String(result.native_base);
 		}
@@ -2345,6 +2718,10 @@ void LunariAnalyzer::_analyze_statement(const String &p_statement, int p_line_nu
 		StringName field_type = field_name == String(result.native_base) ? result.native_base : (field_map.has(field_name) ? field_map[field_name].type : local_type_map[field_name]);
 		if (!LunariGodotApi::has_class(field_type)) {
 			_add_error(p_line_number, vformat("field '%s' is not an object type.", field_name));
+			return;
+		}
+		if (_is_private_member(field_type, property_name) && field_type != result.class_name) {
+			_add_error(p_line_number, vformat("private member '%s' cannot be accessed on '%s'.", property_name, field_type));
 			return;
 		}
 		PropertyInfo property_info;
@@ -2390,7 +2767,7 @@ void LunariAnalyzer::_analyze_statement(const String &p_statement, int p_line_nu
 				_add_error(p_line_number, vformat("could not infer expression type for local '%s'.", local_name));
 				return;
 			}
-			if (!_is_assignable(local_type, rhs.name)) {
+			if (!_is_assignable(local_type, rhs.name) && !_is_assignable(_resolve_type_alias(local_type), _resolve_type_alias(rhs.name)) && !_is_lunari_subclass(rhs.name, local_type)) {
 				_add_error(p_line_number, vformat("cannot assign '%s' to local '%s' of type '%s'.", rhs.name, local_name, local_type));
 				return;
 			}
@@ -2410,7 +2787,7 @@ void LunariAnalyzer::_analyze_statement(const String &p_statement, int p_line_nu
 				_add_error(p_line_number, vformat("could not infer expression type for assignment to local '%s'.", lhs));
 				return;
 			}
-			if (!_is_assignable(local_type_map[lhs], rhs.name)) {
+			if (!_is_assignable(local_type_map[lhs], rhs.name) && !_is_assignable(_resolve_type_alias(local_type_map[lhs]), _resolve_type_alias(rhs.name)) && !_is_lunari_subclass(rhs.name, local_type_map[lhs])) {
 				_add_error(p_line_number, vformat("cannot assign '%s' to local '%s' of type '%s'.", rhs.name, lhs, local_type_map[lhs]));
 			}
 			return;
@@ -2444,7 +2821,7 @@ void LunariAnalyzer::_analyze_statement(const String &p_statement, int p_line_nu
 			_add_error(p_line_number, vformat("could not infer expression type for assignment to '%s'.", lhs));
 			return;
 		}
-		if (!_is_assignable(field_map[lhs].type, rhs.name)) {
+		if (!_is_assignable(field_map[lhs].type, rhs.name) && !_is_assignable(_resolve_type_alias(field_map[lhs].type), _resolve_type_alias(rhs.name)) && !_is_lunari_subclass(rhs.name, field_map[lhs].type)) {
 			_add_error(p_line_number, vformat("cannot assign '%s' to field '%s' of type '%s'.", rhs.name, lhs, field_map[lhs].type));
 		}
 		return;
@@ -2585,10 +2962,19 @@ const LunariAnalyzer::Result &LunariAnalyzer::analyze(const String &p_source, co
 	module_names.clear();
 	abstract_classes.clear();
 	type_parameters.clear();
+	enum_names.clear();
 	type_aliases.clear();
+	constant_types.clear();
+	enum_values.clear();
+	class_bases.clear();
 	class_method_returns.clear();
 	class_methods.clear();
 	class_field_types.clear();
+	class_private_members.clear();
+	class_abstract_methods.clear();
+	dependency_graph.clear();
+	dependency_visit_stack.clear();
+	dependency_visited.clear();
 
 	LunariParser parser;
 	LunariAST::Document document = parser.parse_ast(source);

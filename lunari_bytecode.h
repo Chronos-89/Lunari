@@ -37,6 +37,11 @@ public:
 		OP_ITER_NEXT,
 		OP_BREAK,
 		OP_NEXT,
+		OP_AWAIT,
+		OP_MATCH_BEGIN,
+		OP_MATCH_ARM,
+		OP_MATCH_END,
+		OP_SUPER,
 		OP_END,
 	};
 

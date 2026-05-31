@@ -65,7 +65,12 @@ void LunariRPCCallable::call(const Variant **p_arguments, int p_argcount, Varian
 		r_call_error.error = Callable::CallError::CALL_ERROR_INSTANCE_IS_NULL;
 		return;
 	}
-	r_return_value = object->callp(method, p_arguments, p_argcount, r_call_error);
+	ScriptInstance *script_instance = object->get_script_instance();
+	if (!script_instance) {
+		r_call_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+		return;
+	}
+	r_return_value = script_instance->callp(method, p_arguments, p_argcount, r_call_error);
 }
 
 Error LunariRPCCallable::rpc(int p_peer_id, const Variant **p_arguments, int p_argcount, Callable::CallError &r_call_error) const {

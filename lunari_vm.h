@@ -31,8 +31,11 @@ public:
 	struct Result {
 		bool ok = false;
 		bool returned = false;
+		bool suspended = false;
 		Variant return_value;
+		String error_type;
 		String error;
+		int error_line = 0;
 		Vector<CallFrame> frames;
 	};
 
