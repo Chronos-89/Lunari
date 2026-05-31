@@ -1,0 +1,67 @@
+require "godot"
+
+type UserName = String
+
+class Greeter
+  @name: UserName
+
+  attr_reader :name
+
+  def initialize(name: UserName): void
+    @name = name.capitalize
+  end
+
+  def salute: String
+    return "Hello " + @name + "!"
+  end
+end
+
+class Main :: Node
+  signal greeted(message: String)
+
+  @label: Label
+  @onready @existing_label: Label = get_node("ExistingLabel")
+  @count: Integer = 0
+  @icon: Resource
+  @export @message: String = ""
+  @seen_greeting: Boolean = false
+  @parent_node: Node
+  @words: Array<String> = ["Hello", " ", "World!"]
+
+  def ready: void
+    g: Greeter = Greeter.new("world")
+    @icon = load("res://icon.svg")
+    self.name = "LunariMain"
+    self.greeted.connect(self.on_greeted)
+    @parent_node = self.get_parent()
+
+    @label = Label.new
+    @label.set_position(Vector2(4, 8))
+    if true
+      @label.text = g.salute
+    else
+      @label.text = "bad"
+    end
+
+    while @count < 2
+      @count = @count + 1
+    end
+
+    for word in @words
+      @message = @message + word
+    end
+
+    @label.text = @message if @count == 2
+    emit_signal("greeted", @message)
+    @existing_label.text = @message
+    add_child(@label)
+  end
+
+  def process(delta: Float): void
+    @count = @count + 1
+  end
+
+  def on_greeted(message: String): void
+    @seen_greeting = true
+  end
+end

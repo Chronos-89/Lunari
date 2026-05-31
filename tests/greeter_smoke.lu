@@ -1,0 +1,45 @@
+require "godot"
+
+type UserName = String
+
+class Greeter
+  @name: UserName
+
+  attr_reader :name
+
+  def initialize(name: UserName): void
+    @name = name.capitalize
+  end
+
+  def salute: String
+    return "Hello " + @name + "!"
+  end
+end
+
+class Main :: Node
+  @label: Label
+  @count: Integer = 0
+  @message: String = ""
+
+  def ready: void
+    g: Greeter = Greeter.new("world")
+
+    @label = Label.new
+    if true
+      @label.text = g.salute
+    else
+      @label.text = "bad"
+    end
+
+    while @count < 2
+      @count = @count + 1
+    end
+
+    for word in ["Hello", " ", "World!"]
+      @message = @message + word
+    end
+
+    @label.text = @message if @count == 2
+    add_child(@label)
+  end
+end
