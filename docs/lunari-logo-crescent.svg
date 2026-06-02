@@ -1,41 +1,40 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 300" role="img" aria-labelledby="title desc">
   <title id="title">Lunari</title>
-  <desc id="desc">Lunari typed Ruby scripting language logo using a smooth red crescent mark.</desc>
+  <desc id="desc">Lunari typed Ruby scripting language logo using a single smooth red crescent mark.</desc>
   <defs>
-    <linearGradient id="crescent-fill" x1="74" y1="34" x2="360" y2="270" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ff171c"/>
-      <stop offset="0.48" stop-color="#ec000d"/>
-      <stop offset="1" stop-color="#a80012"/>
+    <linearGradient id="crescent-fill" x1="68" y1="34" x2="382" y2="278" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff1b22"/>
+      <stop offset="0.48" stop-color="#ed0011"/>
+      <stop offset="1" stop-color="#a90013"/>
     </linearGradient>
-    <linearGradient id="crescent-outline" x1="72" y1="24" x2="356" y2="282" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffd0d4" stop-opacity="0.46"/>
-      <stop offset="0.54" stop-color="#ff5c66" stop-opacity="0.3"/>
-      <stop offset="1" stop-color="#5a0009" stop-opacity="0.32"/>
+    <linearGradient id="crescent-outline" x1="70" y1="28" x2="376" y2="270" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffd4d8" stop-opacity="0.46"/>
+      <stop offset="0.55" stop-color="#ff6870" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#5f0009" stop-opacity="0.3"/>
     </linearGradient>
-    <path id="crescent" fill-rule="evenodd" d="M277 29C177 35 76 120 63 213c-18 129 105 231 273 219 69-5 133-30 184-70-80 31-175 22-243-36-85-72-95-197-22-279 26-29 55-46 78-55-17-1-35 0-56 1Zm89 25C280 50 198 117 185 212c-14 99 58 188 161 197 47 4 94-8 133-31-64 52-153 67-225 35-88-39-130-132-100-226C182 98 268 41 366 54Z"/>
+    <path id="crescent" d="M367 36C246 23 98 95 72 188c-25 91 86 165 286 101-129 18-228-17-247-87-18-68 72-151 256-166Z"/>
     <clipPath id="crescent-clip">
       <use href="#crescent"/>
     </clipPath>
     <filter id="shadow" x="-24%" y="-24%" width="148%" height="148%">
-      <feDropShadow dx="0" dy="10" stdDeviation="9" flood-color="#3a0008" flood-opacity="0.26"/>
+      <feDropShadow dx="0" dy="9" stdDeviation="9" flood-color="#3a0008" flood-opacity="0.25"/>
     </filter>
   </defs>
 
   <g filter="url(#shadow)">
     <use href="#crescent" fill="url(#crescent-fill)"/>
-    <g clip-path="url(#crescent-clip)" opacity="0.18">
-      <path d="M65 215 150 156 188 260 111 340Z" fill="#ffffff"/>
-      <path d="M150 156 252 69 188 260Z" fill="#6f0008"/>
-      <path d="M188 260 320 424 111 340Z" fill="#590006"/>
-      <path d="M252 69 478 380 188 260Z" fill="#ffffff"/>
-      <path d="M92 150 150 156 65 215Z" fill="#ffffff"/>
-      <path d="M188 260 478 380 320 424Z" fill="#2f0004"/>
-      <path d="M65 215 150 156 252 69" fill="none" stroke="#ffffff" stroke-width="4"/>
-      <path d="M150 156 188 260 478 380" fill="none" stroke="#240003" stroke-width="5"/>
+    <g clip-path="url(#crescent-clip)" opacity="0.16">
+      <path d="M74 189 146 139 181 244 102 278Z" fill="#ffffff"/>
+      <path d="M146 139 260 52 181 244Z" fill="#6e0009"/>
+      <path d="M181 244 352 289 102 278Z" fill="#590007"/>
+      <path d="M260 52 358 289 181 244Z" fill="#ffffff"/>
+      <path d="M91 148 146 139 74 189Z" fill="#ffffff"/>
+      <path d="M74 189 146 139 260 52" fill="none" stroke="#ffffff" stroke-width="4"/>
+      <path d="M146 139 181 244 358 289" fill="none" stroke="#250003" stroke-width="5"/>
     </g>
     <use href="#crescent" fill="none" stroke="url(#crescent-outline)" stroke-width="5" stroke-linejoin="round"/>
   </g>
 
-  <text x="555" y="132" fill="#f7edf1" font-family="Segoe UI, Arial, sans-serif" font-size="74" font-weight="760" letter-spacing="0">Lunari</text>
-  <text x="560" y="179" fill="#f2b9c2" font-family="Segoe UI, Arial, sans-serif" font-size="28" letter-spacing="0">Typed Ruby for Godot</text>
+  <text x="520" y="132" fill="#f7edf1" font-family="Segoe UI, Arial, sans-serif" font-size="74" font-weight="760" letter-spacing="0">Lunari</text>
+  <text x="526" y="179" fill="#f2b9c2" font-family="Segoe UI, Arial, sans-serif" font-size="28" letter-spacing="0">Typed Ruby for Godot</text>
 </svg>
