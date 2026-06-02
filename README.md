@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./docs/lunari-ruby-logo.svg" alt="Lunari Ruby Logo" width="760">
+  <img src="./docs/lunari-logo.svg" alt="Lunari Ruby Logo" width="760">
 </p>
 
 # Lunari
