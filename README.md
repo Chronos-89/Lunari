@@ -1,6 +1,8 @@
-# Lunari
+<p align="center">
+  <img src="docs/lunari-ruby-logo.svg" alt="Lunari Ruby Logo" width="900">
+</p>
 
-![Lunari Ruby Logo](docs/lunari-ruby-logo.svg)
+# Lunari
 
 Lunari is a statically typed Ruby-style scripting language for this Godot RPG fork. The goal is simple to say and hard to build: keep the readability and warmth of Ruby, keep the editor ergonomics Godot users expect, and give gameplay code a faster typed runtime than ordinary dynamic script dispatch.
 
