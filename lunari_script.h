@@ -235,6 +235,7 @@ public:
 	struct MethodSignatureInfo {
 		StringName owner_class;
 		StringName name;
+		StringName return_type;
 		Vector<LunariAST::Parameter> parameters;
 	};
 
@@ -419,6 +420,7 @@ private:
 	String debug_error;
 	Vector<DebugFrame> debug_stack;
 	HashMap<StringName, uint64_t> profile_call_counts;
+	HashMap<StringName, Variant> global_constants;
 
 public:
 	static LunariLanguage *get_singleton() { return singleton; }
@@ -454,6 +456,11 @@ public:
 	String make_function(const String &p_class, const String &p_name, const PackedStringArray &p_args) const override;
 	void auto_indent_code(String &p_code, int p_from_line, int p_to_line) const override;
 	void add_global_constant(const StringName &p_variable, const Variant &p_value) override;
+	void add_named_global_constant(const StringName &p_name, const Variant &p_value) override;
+	void remove_named_global_constant(const StringName &p_name) override;
+	bool can_inherit_from_file() const override { return true; }
+	bool handles_global_class_type(const String &p_type) const override;
+	String get_global_class_name(const String &p_path, String *r_base_type = nullptr, String *r_icon_path = nullptr, bool *r_is_abstract = nullptr, bool *r_is_tool = nullptr) const override;
 	String debug_get_error() const override;
 	int debug_get_stack_level_count() const override;
 	int debug_get_stack_level_line(int p_level) const override;
@@ -493,6 +500,7 @@ public:
 	bool handles_type(const String &p_type) const override;
 	String get_resource_type(const String &p_path) const override;
 	void get_dependencies(const String &p_path, List<String> *p_dependencies, bool p_add_types = false) override;
+	void get_classes_used(const String &p_path, HashSet<StringName> *r_classes) override;
 	Error rename_dependencies(const String &p_path, const HashMap<String, String> &p_map) override;
 };
 

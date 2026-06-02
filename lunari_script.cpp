@@ -353,6 +353,27 @@ static String _lunari_proc_type_surface(const String &p_type) {
 
 static String _lunari_type_surface(const String &p_type) {
 	String type = p_type.strip_edges();
+	if (type == "bool") {
+		return "Boolean";
+	}
+	if (type == "int") {
+		return "Integer";
+	}
+	if (type == "float") {
+		return "Float";
+	}
+	if (type == "string") {
+		return "String";
+	}
+	if (type == "nil") {
+		return "Nil";
+	}
+	if (type == "any") {
+		return "Any";
+	}
+	if (type == "symbol") {
+		return "Symbol";
+	}
 	return type;
 }
 
@@ -536,10 +557,47 @@ static String _lunari_method_signature(const MethodInfo &p_method, const StringN
 		}
 	}
 	text += ")";
-	if (p_return_type != StringName() && p_return_type != "void") {
+	if (p_return_type != StringName() && p_return_type != "void" && p_return_type != "Void") {
 		text += ": " + String(p_return_type);
 	}
 	return text;
+}
+
+static String _lunari_help_text(const String &p_symbol) {
+	static const HashMap<String, String> help = []() {
+		HashMap<String, String> map;
+		map["require"] = "Loads a Lunari/Ruby-style library or project script. Use require \"godot\" for Godot classes.";
+		map["class"] = "Declares a class. Godot/Ruby inheritance uses class Player < CharacterBody2D.";
+		map["module"] = "Declares a Ruby-style module for mixins, namespaces, helpers, or abstract contracts.";
+		map["def"] = "Declares a method. Omit parentheses when there are no arguments: def ready";
+		map["end"] = "Closes a class, module, method, block, branch, loop, or match arm.";
+		map["attr_reader"] = "Creates a typed reader method for an instance variable, e.g. attr_reader :name.";
+		map["attr_writer"] = "Creates a typed writer method for an instance variable.";
+		map["attr_accessor"] = "Creates typed reader and writer methods for an instance variable.";
+		map["@export"] = "Exports an instance variable to the Godot Inspector without showing the @ prefix.";
+		map["@onready"] = "Initializes an instance variable after the node enters the scene tree. Supports $NodePath shorthand.";
+		map["@tool"] = "Runs the script in the editor when attached to a node or resource.";
+		map["@rpc"] = "Marks a method for Godot multiplayer RPC. Arguments mirror Godot RPC configuration.";
+		map["signal"] = "Declares a typed Godot signal, e.g. signal greeted(message: String).";
+		map["await"] = "Suspends execution until a signal/coroutine completes.";
+		map["self"] = "The current object. Use self.name for Godot properties and @name for Lunari instance variables.";
+		map["super"] = "Calls the parent implementation of the current method, matching Ruby behavior.";
+		map["String"] = "Ruby/Lunari text type. Common methods: capitalize, upcase, downcase, split, strip, length.";
+		map["Integer"] = "Whole-number type.";
+		map["Float"] = "Floating-point type.";
+		map["Boolean"] = "true or false.";
+		map["Nil"] = "No value. Use nullable unions such as String | Nil.";
+		map["Array"] = "Typed sequence. Prefer Array<String>, Array<Integer>, or Array<Node2D>.";
+		map["Hash"] = "Typed dictionary. Prefer Hash<String, Integer> or Hash<Symbol, Variant>.";
+		map["Callable"] = "Typed callable function reference.";
+		map["Signal"] = "Typed Godot signal value.";
+		map["NodePath"] = "Path to a node or resource path segment.";
+		map["Vector2"] = "2D vector value used by Node2D, physics, movement, and positions.";
+		map["Vector3"] = "3D vector value used by Node3D, physics, movement, and positions.";
+		return map;
+	}();
+	HashMap<String, String>::ConstIterator E = help.find(p_symbol);
+	return E ? E->value : String();
 }
 
 static void _lunari_collect_editor_symbols(const Vector<LunariAST::Node> &p_nodes, Vector<LunariEditorSymbol> *r_symbols, const StringName &p_owner = StringName()) {
@@ -9127,6 +9185,7 @@ Variant LunariScript::_parse_literal(const String &p_value, const StringName &p_
 	return Variant();
 }
 
+static String _lunari_method_signature_key(const StringName &p_owner_class, const StringName &p_method);
 static void _lunari_collect_method_signatures(const Vector<LunariAST::Node> &p_nodes, HashMap<String, LunariScript::MethodSignatureInfo> *r_signatures, const StringName &p_owner_class = StringName());
 
 static const int LUNARI_FAST_EXPR_NONE = 0;
@@ -9871,41 +9930,51 @@ Vector<DocData::ClassDoc> LunariScript::get_documentation() const {
 	DocData::ClassDoc doc;
 	doc.name = class_name;
 	doc.inherits = native_base;
-	doc.brief_description = "Lunari script class.";
-	doc.description = "Statically typed Ruby-style Lunari script generated from " + get_path() + ".";
+	doc.brief_description = "TypeRuby-style Lunari script class.";
+	doc.description = "Lunari is a statically typed Ruby-style gameplay language for Godot. Use Ruby inheritance (`class Player < CharacterBody2D`), typed instance variables (`@health: Integer`), Inspector exports (`@export @speed: Float = 120.0`), signals (`signal hit(damage: Integer)`), and Godot lifecycle methods such as `def ready`, `def process(delta: Float)`, and `def physics_process(delta: Float)`. " + get_path();
 	doc.is_script_doc = true;
 	doc.script_path = get_path();
 	for (const FieldInfo &field : fields) {
 		DocData::PropertyDoc property;
-		property.name = field.name;
-		property.type = field.type;
-		property.description = field.is_exported ? "Exported Lunari property." : "Lunari property.";
+		property.name = _lunari_editor_symbol_lookup_name(field.name);
+		property.type = _lunari_type_surface(field.type);
+		property.description = field.is_exported ? "Exported Lunari instance variable. The Inspector displays this without the @ prefix." : "Typed Lunari instance variable.";
+		if (field.is_onready) {
+			property.description += " Initialized with @onready after the owner enters the scene tree.";
+		}
 		doc.properties.push_back(property);
 	}
 	for (const MethodInfo &method_info : methods) {
 		DocData::MethodDoc method;
 		method.name = method_info.name;
-		method.return_type = "void";
+		method.return_type = String();
+		HashMap<String, MethodSignatureInfo>::ConstIterator Signature = method_signatures.find(_lunari_method_signature_key(class_name, method_info.name));
+		if (!Signature) {
+			Signature = method_signatures.find(_lunari_method_signature_key(StringName(), method_info.name));
+		}
+		if (Signature && Signature->value.return_type != StringName() && Signature->value.return_type != "void") {
+			method.return_type = _lunari_type_surface(Signature->value.return_type);
+		}
 		for (const PropertyInfo &argument : method_info.arguments) {
 			DocData::ArgumentDoc arg;
 			arg.name = argument.name;
 			arg.type = _lunari_property_type_name(argument);
 			method.arguments.push_back(arg);
 		}
-		method.description = "Lunari method.";
+		method.description = "Lunari method using Ruby `def` syntax.";
 		doc.methods.push_back(method);
 	}
 	for (const MethodInfo &signal_info : signals) {
 		DocData::MethodDoc signal;
 		signal.name = signal_info.name;
-		signal.return_type = "void";
+		signal.return_type = String();
 		for (const PropertyInfo &argument : signal_info.arguments) {
 			DocData::ArgumentDoc arg;
 			arg.name = argument.name;
 			arg.type = _lunari_property_type_name(argument);
 			signal.arguments.push_back(arg);
 		}
-		signal.description = "Lunari signal.";
+		signal.description = "Typed Godot signal declared from Lunari.";
 		doc.signals.push_back(signal);
 	}
 	docs.push_back(doc);
@@ -11785,6 +11854,7 @@ static void _lunari_collect_method_signatures(const Vector<LunariAST::Node> &p_n
 			LunariScript::MethodSignatureInfo signature;
 			signature.owner_class = p_owner_class;
 			signature.name = node.name;
+			signature.return_type = _lunari_normalize_type_name(node.type);
 			signature.parameters = node.parameters;
 			(*r_signatures)[_lunari_method_signature_key(p_owner_class, node.name)] = signature;
 			if (p_owner_class == StringName()) {
@@ -13812,12 +13882,12 @@ Vector<ScriptLanguage::ScriptTemplate> LunariLanguage::get_built_in_templates(co
 	ScriptTemplate base;
 	base.inherit = p_object;
 	base.name = "Default";
-	base.description = "TypeRuby-style Lunari node script with ready/process lifecycle methods.";
+	base.description = "TypeRuby-style Lunari node script with Ruby inheritance and Godot lifecycle methods.";
 	base.content = "require \"godot\"\n\n"
 				   "class _CLASS_ < _BASE_\n"
-				   "  def ready: void\n"
+				   "  def ready\n"
 				   "  end\n\n"
-				   "  def process(delta: Float): void\n"
+				   "  def process(delta: Float)\n"
 				   "  end\n"
 				   "end\n";
 	templates.push_back(base);
@@ -13830,10 +13900,10 @@ Vector<ScriptLanguage::ScriptTemplate> LunariLanguage::get_built_in_templates(co
 					"class _CLASS_ < _BASE_\n"
 					"  @label: Label\n"
 					"  @message: String = \"Hello, world!\"\n\n"
-					"  def initialize: void\n"
+					"  def initialize\n"
 					"    @label = Label.new\n"
 					"  end\n\n"
-					"  def ready: void\n"
+					"  def ready\n"
 					"    @label.text = @message\n"
 					"    add_child(@label)\n"
 					"  end\n"
@@ -13850,9 +13920,9 @@ Vector<ScriptLanguage::ScriptTemplate> LunariLanguage::get_built_in_templates(co
 						"  @export @display_name: String = \"Hero\"\n"
 						"  @export_range(1, 99, 1) @level: Integer = 1\n"
 					   "  @velocity: Vector2 = Vector2(0, 0)\n\n"
-					   "  def ready: void\n"
+					   "  def ready\n"
 					   "  end\n\n"
-					   "  def process(delta: Float): void\n"
+					   "  def process(delta: Float)\n"
 					   "  end\n"
 					   "end\n";
 		templates.push_back(actor);
@@ -13973,14 +14043,18 @@ int LunariLanguage::find_function(const String &p_function, const String &p_code
 }
 
 String LunariLanguage::make_function(const String &p_class, const String &p_name, const PackedStringArray &p_args) const {
-	String code = "def " + p_name + "(";
-	for (int i = 0; i < p_args.size(); i++) {
-		if (i > 0) {
-			code += ", ";
+	String code = "def " + p_name;
+	if (!p_args.is_empty()) {
+		code += "(";
+		for (int i = 0; i < p_args.size(); i++) {
+			if (i > 0) {
+				code += ", ";
+			}
+			code += p_args[i] + ": Variant";
 		}
-		code += p_args[i] + ": Variant";
+		code += ")";
 	}
-	code += "): void\nend\n";
+	code += "\nend\n";
 	return code;
 }
 
@@ -13989,6 +14063,50 @@ void LunariLanguage::auto_indent_code(String &p_code, int p_from_line, int p_to_
 }
 
 void LunariLanguage::add_global_constant(const StringName &p_variable, const Variant &p_value) {
+	global_constants[p_variable] = p_value;
+}
+
+void LunariLanguage::add_named_global_constant(const StringName &p_name, const Variant &p_value) {
+	add_global_constant(p_name, p_value);
+}
+
+void LunariLanguage::remove_named_global_constant(const StringName &p_name) {
+	global_constants.erase(p_name);
+}
+
+bool LunariLanguage::handles_global_class_type(const String &p_type) const {
+	return p_type == "LunariScript" || p_type == "Script";
+}
+
+String LunariLanguage::get_global_class_name(const String &p_path, String *r_base_type, String *r_icon_path, bool *r_is_abstract, bool *r_is_tool) const {
+	if (p_path.get_extension().to_lower() != "lu") {
+		return String();
+	}
+
+	Error err = OK;
+	String source = FileAccess::get_file_as_string(p_path, &err);
+	if (err != OK || source.is_empty()) {
+		return String();
+	}
+
+	LunariAnalyzer analyzer;
+	const LunariAnalyzer::Result &analysis = analyzer.analyze(source, p_path);
+	if (analysis.class_name == StringName()) {
+		return String();
+	}
+	if (r_base_type) {
+		*r_base_type = String(analysis.native_base);
+	}
+	if (r_icon_path) {
+		*r_icon_path = String();
+	}
+	if (r_is_abstract) {
+		*r_is_abstract = false;
+	}
+	if (r_is_tool) {
+		*r_is_tool = analysis.is_tool;
+	}
+	return String(analysis.class_name);
 }
 
 String LunariLanguage::debug_get_error() const {
@@ -14042,16 +14160,47 @@ ScriptInstance *LunariLanguage::debug_get_stack_level_instance(int p_level) {
 void LunariLanguage::debug_get_globals(List<String> *p_globals, List<Variant> *p_values, int p_max_subitems, int p_max_depth) {
 	ERR_FAIL_NULL(p_globals);
 	ERR_FAIL_NULL(p_values);
+	for (const KeyValue<StringName, Variant> &global : global_constants) {
+		p_globals->push_back(global.key);
+		p_values->push_back(global.value);
+	}
+	List<Pair<String, Variant>> public_constants;
+	get_public_constants(&public_constants);
+	for (const Pair<String, Variant> &constant : public_constants) {
+		p_globals->push_back(constant.first);
+		p_values->push_back(constant.second);
+	}
 }
 
 String LunariLanguage::debug_parse_stack_level_expression(int p_level, const String &p_expression, int p_max_subitems, int p_max_depth) {
 	ERR_FAIL_INDEX_V(p_level, debug_stack.size(), String());
 	const DebugFrame &frame = debug_stack[p_level];
-	if (frame.locals.has(p_expression)) {
-		return Variant(frame.locals[p_expression]).stringify();
+	String expression = p_expression.strip_edges();
+	if (expression.begins_with("self.")) {
+		expression = expression.substr(5);
 	}
-	if (frame.members.has(p_expression)) {
-		return Variant(frame.members[p_expression]).stringify();
+	StringName expression_name = expression;
+	if (frame.locals.has(expression_name)) {
+		return Variant(frame.locals[expression_name]).stringify();
+	}
+	if (frame.members.has(expression_name)) {
+		return Variant(frame.members[expression_name]).stringify();
+	}
+	if (!expression.begins_with("@")) {
+		StringName ivar_name = "@" + expression;
+		if (frame.members.has(ivar_name)) {
+			return Variant(frame.members[ivar_name]).stringify();
+		}
+	}
+	if (global_constants.has(expression_name)) {
+		return Variant(global_constants[expression_name]).stringify();
+	}
+	List<Pair<String, Variant>> public_constants;
+	get_public_constants(&public_constants);
+	for (const Pair<String, Variant> &constant : public_constants) {
+		if (constant.first == expression) {
+			return constant.second.stringify();
+		}
 	}
 	return String();
 }
@@ -14112,6 +14261,9 @@ void LunariLanguage::get_public_functions(List<MethodInfo> *p_functions) const {
 }
 void LunariLanguage::get_public_constants(List<Pair<String, Variant>> *p_constants) const {
 	ERR_FAIL_NULL(p_constants);
+	for (const KeyValue<StringName, Variant> &global : global_constants) {
+		p_constants->push_back(Pair<String, Variant>(String(global.key), global.value));
+	}
 	p_constants->push_back(Pair<String, Variant>("PI", 3.14159265358979323846));
 	p_constants->push_back(Pair<String, Variant>("TAU", 6.28318530717958647692));
 	p_constants->push_back(Pair<String, Variant>("INF", Math::INF));
@@ -14148,13 +14300,52 @@ Error LunariLanguage::complete_code(const String &p_code, const String &p_path, 
 	r_force = false;
 	r_call_hint = String();
 
-	static const char *keywords[] = { "require", "require_relative", "class", "module", "abstract", "def", "end", "public", "private", "static", "const", "case", "when", "begin", "rescue", "ensure", "await", "return", "self", "super", "true", "false", "nil", "if", "elsif", "else", "unless", "while", "until", "for", "in", "break", "next", "redo", "yield", "as", "is", "include", "extend", "implements", "attr_reader", "attr_writer", "attr_accessor", "alias", "alias_method", "undef", "undef_method", "remove_method" };
-	for (const char *keyword : keywords) {
-		_lunari_add_completion(r_options, keyword, CODE_COMPLETION_KIND_PLAIN_TEXT, LOCATION_OTHER);
+	const String current_line = _lunari_current_completion_line(p_code).strip_edges();
+	if (current_line.begins_with("@export_range")) {
+		r_call_hint = "@export_range(min: Float, max: Float, step: Float = 1.0)";
+	} else if (current_line.begins_with("@export_enum")) {
+		r_call_hint = "@export_enum(\"One\", \"Two\", \"Three\")";
+	} else if (current_line.begins_with("@export_flags")) {
+		r_call_hint = "@export_flags(\"A\", \"B\", \"C\")";
+	} else if (current_line.begins_with("@export_file")) {
+		r_call_hint = "@export_file(\"*.png,*.jpg,*.tscn\")";
+	} else if (current_line.begins_with("@export_group")) {
+		r_call_hint = "@export_group(\"Group\", \"prefix\")";
+	} else if (current_line.begins_with("@rpc")) {
+		r_call_hint = "@rpc(\"authority\", \"call_remote\", \"reliable\", channel: 0)";
+	} else if (current_line.begins_with("signal ")) {
+		r_call_hint = "signal name(arg: Type, ...)";
+	} else if (current_line.begins_with("def ")) {
+		r_call_hint = "def name(arg: Type = default): ReturnType";
+	} else if (current_line.begins_with("class ")) {
+		r_call_hint = "class Name < GodotBaseClass";
 	}
-	static const char *types[] = { "String", "Integer", "Float", "Boolean", "NilClass", "nil", "any", "Variant", "Object", "Node", "Node2D", "Control", "Label", "Sprite2D", "CharacterBody2D", "Resource", "PackedScene", "Array", "Hash", "Set", "Signal", "Callable", "Vector2", "Vector3", "Color", "NodePath" };
+
+	static const char *keywords[] = { "require", "require_relative", "class", "module", "abstract", "def", "end", "public", "private", "protected", "static", "const", "case", "when", "match", "begin", "rescue", "ensure", "await", "return", "self", "super", "true", "false", "nil", "if", "elsif", "else", "unless", "while", "until", "for", "in", "break", "next", "redo", "yield", "as", "is", "include", "prepend", "extend", "implements", "attr_reader", "attr_writer", "attr_accessor", "alias", "alias_method", "undef", "undef_method", "remove_method" };
+	for (const char *keyword : keywords) {
+		_lunari_add_completion(r_options, keyword, CODE_COMPLETION_KIND_PLAIN_TEXT, LOCATION_OTHER, _lunari_help_text(keyword));
+	}
+	static const char *types[] = { "String", "Integer", "Float", "Boolean", "Nil", "NilClass", "Any", "Variant", "Object", "Node", "Node2D", "Node3D", "Control", "Label", "Sprite2D", "CharacterBody2D", "CharacterBody3D", "Resource", "PackedScene", "Array", "Hash", "Set", "Signal", "Callable", "Proc", "Vector2", "Vector2i", "Vector3", "Vector3i", "Vector4", "Color", "NodePath", "RID", "PackedStringArray", "PackedVector2Array", "PackedVector3Array" };
 	for (const char *type : types) {
-		_lunari_add_completion(r_options, type, CODE_COMPLETION_KIND_CLASS, LOCATION_OTHER);
+		_lunari_add_completion(r_options, type, CODE_COMPLETION_KIND_CLASS, LOCATION_OTHER, _lunari_help_text(type));
+	}
+	static const char *snippets[][2] = {
+		{ "require \"godot\"", "Load the Godot API for Lunari." },
+		{ "class Player < CharacterBody2D", "Ruby-style Godot inheritance." },
+		{ "def ready", "Godot lifecycle callback called when the node enters the scene tree." },
+		{ "def process(delta: Float)", "Godot frame callback." },
+		{ "def physics_process(delta: Float)", "Godot fixed-timestep callback." },
+		{ "@export @name: String = \"\"", "Typed Inspector export; Inspector shows name, not @name." },
+		{ "@onready @label: Label = $Label", "Resolve a node path after the owner enters the scene tree." },
+		{ "signal greeted(message: String)", "Typed Godot signal declaration." },
+		{ "Array<String>", "Typed Lunari array." },
+		{ "Hash<String, Variant>", "Typed Lunari hash." },
+		{ "String | Nil", "Nullable/union type." },
+		{ "Callable<Variant>", "Callable type." },
+		{ "Proc<String, Integer>", "Ruby-style block/proc surface type." },
+	};
+	for (uint32_t i = 0; i < sizeof(snippets) / sizeof(snippets[0]); i++) {
+		_lunari_add_completion(r_options, snippets[i][0], CODE_COMPLETION_KIND_PLAIN_TEXT, LOCATION_OTHER, snippets[i][1]);
 	}
 	List<Pair<String, Variant>> constants;
 	get_public_constants(&constants);
@@ -14284,12 +14475,25 @@ Error LunariLanguage::complete_code(const String &p_code, const String &p_path, 
 	List<MethodInfo> annotations;
 	get_public_annotations(&annotations);
 	for (const MethodInfo &annotation : annotations) {
-		_lunari_add_completion(r_options, annotation.name, CODE_COMPLETION_KIND_PLAIN_TEXT, LOCATION_OTHER, _lunari_method_signature(annotation));
+		String detail = _lunari_method_signature(annotation);
+		String help = _lunari_help_text(annotation.name);
+		if (!help.is_empty()) {
+			detail += detail.is_empty() ? help : " - " + help;
+		}
+		_lunari_add_completion(r_options, annotation.name, CODE_COMPLETION_KIND_PLAIN_TEXT, LOCATION_OTHER, detail);
 	}
 	return OK;
 }
 
 Error LunariLanguage::lookup_code(const String &p_code, const String &p_symbol, const String &p_path, Object *p_owner, LookupResult &r_result) {
+	String direct_help = _lunari_help_text(p_symbol);
+	if (!direct_help.is_empty()) {
+		r_result.type = LOOKUP_RESULT_CLASS;
+		r_result.class_name = p_symbol;
+		r_result.description = direct_help;
+		r_result.script_path = p_path;
+		return OK;
+	}
 	LunariParser parser;
 	LunariParser::Result result = parser.parse(p_code);
 	LunariAST::Document ast = parser.parse_ast(p_code);
@@ -14531,6 +14735,91 @@ void ResourceFormatLoaderLunariScript::get_dependencies(const String &p_path, Li
 
 	HashSet<String> seen;
 	_lunari_collect_required_script_paths(source, p_path, seen, p_dependencies, p_add_types);
+}
+
+static void _lunari_collect_type_classes_from_type(const StringName &p_type, HashSet<StringName> *r_classes) {
+	ERR_FAIL_NULL(r_classes);
+	String type = String(p_type).strip_edges();
+	if (type.is_empty()) {
+		return;
+	}
+	Vector<String> queue;
+	queue.push_back(type);
+	while (!queue.is_empty()) {
+		String current = queue[queue.size() - 1].strip_edges();
+		queue.remove_at(queue.size() - 1);
+		if (current.is_empty()) {
+			continue;
+		}
+		if (current.ends_with("?")) {
+			current = current.substr(0, current.length() - 1).strip_edges();
+		}
+		int pipe = current.find("|");
+		if (pipe >= 0) {
+			for (const String &part : current.split("|")) {
+				queue.push_back(part.strip_edges());
+			}
+			continue;
+		}
+		int generic = current.find("<");
+		if (generic > 0 && current.ends_with(">")) {
+			String base = current.substr(0, generic).strip_edges();
+			if (!base.is_empty()) {
+				queue.push_back(base);
+			}
+			String args = current.substr(generic + 1, current.length() - generic - 2);
+			for (const String &arg : args.split(",")) {
+				queue.push_back(arg.strip_edges());
+			}
+			continue;
+		}
+		if (ClassDB::class_exists(current)) {
+			r_classes->insert(StringName(current));
+		}
+	}
+}
+
+static void _lunari_collect_classes_from_ast(const Vector<LunariAST::Node> &p_nodes, HashSet<StringName> *r_classes) {
+	ERR_FAIL_NULL(r_classes);
+	for (const LunariAST::Node &node : p_nodes) {
+		if (node.kind == LunariAST::Node::NODE_CLASS) {
+			_lunari_collect_type_classes_from_type(node.base, r_classes);
+		}
+		if (node.type != StringName()) {
+			_lunari_collect_type_classes_from_type(node.type, r_classes);
+		}
+		for (const LunariAST::Parameter &parameter : node.parameters) {
+			_lunari_collect_type_classes_from_type(parameter.type, r_classes);
+		}
+		_lunari_collect_classes_from_ast(node.children, r_classes);
+		_lunari_collect_classes_from_ast(node.else_children, r_classes);
+		_lunari_collect_classes_from_ast(node.rescue_children, r_classes);
+	}
+}
+
+void ResourceFormatLoaderLunariScript::get_classes_used(const String &p_path, HashSet<StringName> *r_classes) {
+	ERR_FAIL_NULL(r_classes);
+
+	Error err = OK;
+	String source = FileAccess::get_file_as_string(p_path, &err);
+	ERR_FAIL_COND_MSG(err != OK, "Cannot open Lunari script file '" + p_path + "'.");
+
+	LunariParser parser;
+	LunariAST::Document document = parser.parse_ast(source);
+	_lunari_collect_classes_from_ast(document.children, r_classes);
+
+	LunariAnalyzer analyzer;
+	const LunariAnalyzer::Result &analysis = analyzer.analyze(source, p_path);
+	_lunari_collect_type_classes_from_type(analysis.native_base, r_classes);
+	for (const LunariAnalyzer::Field &field : analysis.fields) {
+		_lunari_collect_type_classes_from_type(field.type, r_classes);
+	}
+	for (const LunariAnalyzer::Method &method : analysis.methods) {
+		_lunari_collect_type_classes_from_type(method.return_type, r_classes);
+		for (const LunariAnalyzer::Parameter &parameter : method.parameters) {
+			_lunari_collect_type_classes_from_type(parameter.type, r_classes);
+		}
+	}
 }
 
 Error ResourceFormatLoaderLunariScript::rename_dependencies(const String &p_path, const HashMap<String, String> &p_map) {

@@ -13,18 +13,46 @@
 HashMap<StringName, LunariGodotApi::ClassInfo> LunariGodotApi::classes;
 bool LunariGodotApi::generated = false;
 
+static StringName _lunari_godot_api_type_surface(const StringName &p_type) {
+	if (p_type == "bool") {
+		return "Boolean";
+	}
+	if (p_type == "int") {
+		return "Integer";
+	}
+	if (p_type == "float") {
+		return "Float";
+	}
+	if (p_type == "string") {
+		return "String";
+	}
+	if (p_type == "nil") {
+		return "Nil";
+	}
+	if (p_type == "any") {
+		return "Any";
+	}
+	if (p_type == "symbol") {
+		return "Symbol";
+	}
+	if (p_type == "void") {
+		return StringName();
+	}
+	return p_type;
+}
+
 StringName LunariGodotApi::type_from_property(const PropertyInfo &p_info, bool p_nil_as_void) {
 	switch (p_info.type) {
 		case Variant::NIL:
 			return p_nil_as_void ? StringName("void") : StringName("Variant");
 		case Variant::BOOL:
-			return "bool";
+			return "Boolean";
 		case Variant::INT:
-			return "int";
+			return "Integer";
 		case Variant::FLOAT:
-			return "float";
+			return "Float";
 		case Variant::STRING:
-			return "string";
+			return "String";
 		case Variant::VECTOR2:
 			return "Vector2";
 		case Variant::VECTOR2I:
@@ -58,7 +86,7 @@ StringName LunariGodotApi::type_from_property(const PropertyInfo &p_info, bool p
 		case Variant::COLOR:
 			return "Color";
 		case Variant::STRING_NAME:
-			return "symbol";
+			return "Symbol";
 		case Variant::NODE_PATH:
 			return "NodePath";
 		case Variant::RID:
@@ -203,7 +231,10 @@ static String _lunari_method_signature_from_info(const MethodInfo &p_info, const
 	}
 	signature += ")";
 	if (p_return_type != StringName()) {
-		signature += ": " + String(p_return_type);
+		StringName return_type = _lunari_godot_api_type_surface(p_return_type);
+		if (return_type != StringName()) {
+			signature += ": " + String(return_type);
+		}
 	}
 	return signature;
 }

@@ -6,7 +6,7 @@
 
 Lunari is a statically typed Ruby-style scripting language for this Godot RPG fork. The goal is simple to say and hard to build: keep the readability and warmth of Ruby, keep the editor ergonomics Godot users expect, and give gameplay code a faster typed runtime than ordinary dynamic script dispatch.
 
-It is not Ruby embedded into Godot. It is not Sorbet syntax pasted on top of Ruby. Lunari is its own Godot `ScriptLanguage` with `.lu` files, TypeRuby-inspired annotations, Godot editor integration, a Lunari analyzer, bytecode/VM support, Godot API metadata, resource loading/saving, exported fields, signals, `@onready`, script templates, documentation hooks, and a fast native call path for common Godot APIs.
+It is not Ruby embedded into Godot. Lunari is its own Godot `ScriptLanguage` with `.lu` files, TypeRuby-inspired annotations, Godot editor integration, a Lunari analyzer, bytecode/VM support, Godot API metadata, resource loading/saving, exported fields, signals, `@onready`, script templates, documentation hooks, and a fast native call path for common Godot APIs.
 
 Lunari is currently developed inside the custom Godot source tree under:
 
@@ -106,7 +106,7 @@ require "godot"
 class HelloWorld < Node2D
   @label: Label
 
-  def ready: void
+  def ready
     @label = Label.new
     @label.text = "Hello, world!"
     add_child(@label)
@@ -124,7 +124,7 @@ end
 Not:
 
 ```ruby
-class Player :: CharacterBody2D
+class Player < CharacterBody2D
 end
 ```
 
@@ -145,7 +145,7 @@ Lunari keeps Ruby's shape, but adds explicit types:
 Methods can annotate parameters and returns:
 
 ```ruby
-def damage(amount: Integer): void
+def damage(amount: Integer)
   @hp = @hp - amount
 end
 
@@ -157,7 +157,7 @@ end
 Ruby-style no-argument methods do not need parentheses:
 
 ```ruby
-def ready: void
+def ready
 end
 
 def salute: String
@@ -215,7 +215,7 @@ type GreetingText = String
 class Greeter
   @name: UserName
 
-  def initialize(name: UserName): void
+  def initialize(name: UserName)
     @name = name.capitalize
   end
 
@@ -227,7 +227,7 @@ end
 class Main < Node
   @label: Label
 
-  def ready: void
+  def ready
     greeter: Greeter = Greeter.new("world")
 
     @label = Label.new
@@ -247,7 +247,7 @@ class Hero < CharacterBody2D
   @export_range(1, 99, 1) @level: Integer = 1
   @export @move_speed: Float = 140.0
 
-  def ready: void
+  def ready
     print(@display_name)
   end
 end
@@ -269,7 +269,7 @@ class DoorSwitch < Node
 
   @export @room_id: String = "castle_hall"
 
-  def ready: void
+  def ready
     emit_signal("opened", @room_id)
   end
 end
@@ -284,7 +284,7 @@ class Hud < Control
   @onready @title: Label = $Title
   @onready @hp_label: Label = %HpLabel
 
-  def ready: void
+  def ready
     @title.text = "Adventure"
     @hp_label.text = "HP 100"
   end
@@ -314,7 +314,7 @@ class PartyNames < Node
   @names: Array<String> = ["luna", "terra", "crono"]
   @message: String = ""
 
-  def ready: void
+  def ready
     loud: Array<String> = @names.map(lambda { |name: String| name.capitalize })
     @message = loud.join(", ")
   end
@@ -372,7 +372,7 @@ end
 class ItemDisplay < Node
   @icon: Resource
 
-  def ready: void
+  def ready
     @icon = load("res://icon.svg")
   end
 end
@@ -543,7 +543,7 @@ def salute(name)
 end
 ```
 
-Sorbet-style `T.sig`, `T::Enum`, and similar syntax are intentionally not part of normal Lunari authoring. If Sorbet-like ideas are useful, they belong in the analyzer/compiler behind the scenes, not in the game script surface.
+Heavy wrapper syntax such as `sig { ... }` blocks and enum helper classes is intentionally not part of normal Lunari authoring. Type information belongs directly on the Ruby-shaped code.
 
 ## Roadmap
 
