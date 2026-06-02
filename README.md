@@ -24,13 +24,13 @@ GDScript is pleasant and tightly integrated, but this fork is aimed at RPGs and 
 
 ## Current Status
 
-Lunari is actively experimental. It already runs real smoke projects, editor integration tests, TypeRuby-style language-depth tests, signal/await tests, memory ownership checks, API snapshot checks, and performance benchmarks. It is not yet something I would honestly call a fully proven GDScript replacement for a large shipped game.
+Lunari is actively experimental. It already covers editor integration, TypeRuby-style language depth, signal/await behavior, memory ownership, Godot API metadata, and performance benchmarks. It is not yet something I would honestly call a fully proven GDScript replacement for a large shipped game.
 
 The short version:
 
 ```text
 Usable for prototypes: yes
-Usable for smoke-tested gameplay scripts: yes
+Usable for the current gameplay examples: yes
 Ready to delete GDScript from Godot: not yet
 ```
 
@@ -396,12 +396,6 @@ Lunari currently includes:
 
 ## Benchmarks
 
-Benchmarks are run from:
-
-```text
-modules/lunari/tests/smoke_project/check_replacement_benchmarks.gd
-```
-
 The benchmark creates equivalent Lunari and GDScript nodes, warms them up, runs each method 4,096 times, compares returned values, and reports total microseconds plus microseconds per call.
 
 The current strict target is:
@@ -506,49 +500,23 @@ To honestly claim full replacement performance, Lunari still needs broader bench
 | String construction | Measured |
 | Node property set/get | Measured |
 | Function calls with many arguments | Needed |
-| Default arguments | Smoke-tested, benchmark needed |
-| Keyword arguments | Smoke-tested, benchmark needed |
-| Array iteration | Smoke-tested, benchmark needed |
-| Hash lookup and mutation | Smoke-tested, benchmark needed |
-| Blocks/lambdas/procs | Smoke-tested, benchmark needed |
-| Signal connect/emit | Smoke-tested, benchmark needed |
-| Await/coroutine resume | Smoke-tested, benchmark needed |
-| Resource load/preload | Smoke-tested, benchmark needed |
+| Default arguments | Tested, benchmark needed |
+| Keyword arguments | Tested, benchmark needed |
+| Array iteration | Tested, benchmark needed |
+| Hash lookup and mutation | Tested, benchmark needed |
+| Blocks/lambdas/procs | Tested, benchmark needed |
+| Signal connect/emit | Tested, benchmark needed |
+| Await/coroutine resume | Tested, benchmark needed |
+| Resource load/preload | Tested, benchmark needed |
 | PackedScene instantiate | Needed |
 | CharacterBody2D movement loop | Needed |
 | Physics process dispatch | Needed |
 | Input polling | Needed |
 | Tilemap/event-style scripting | Needed |
-| Hot reload state preservation | Smoke-tested, benchmark/stress needed |
+| Hot reload state preservation | Tested, benchmark/stress needed |
 | Large project analyzer time | Needed |
 | Autocomplete latency | Needed |
 | Debugger stack/locals overhead | Needed |
-
-## Running The Smoke Tests
-
-From the Godot source root:
-
-```powershell
-cd D:\Godot-RPG
-
-bin\godot.windows.editor.dev.x86_64.console.exe `
-  --headless `
-  --path modules\lunari\tests\smoke_project `
-  -s res://check_runtime_parity.gd
-```
-
-Useful checks:
-
-```powershell
-bin\godot.windows.editor.dev.x86_64.console.exe --headless --path modules\lunari\tests\smoke_project -s res://check_language_depth.gd
-bin\godot.windows.editor.dev.x86_64.console.exe --headless --path modules\lunari\tests\smoke_project -s res://check_editor_integration.gd
-bin\godot.windows.editor.dev.x86_64.console.exe --headless --path modules\lunari\tests\smoke_project -s res://check_editor_tooling.gd
-bin\godot.windows.editor.dev.x86_64.console.exe --headless --path modules\lunari\tests\smoke_project -s res://check_api_snapshot.gd
-bin\godot.windows.editor.dev.x86_64.console.exe --headless --path modules\lunari\tests\smoke_project -s res://check_tokenizer_buffer.gd
-bin\godot.windows.editor.dev.x86_64.console.exe --headless --path modules\lunari\tests\smoke_project -s res://check_memory_ownership.gd
-bin\godot.windows.editor.dev.x86_64.console.exe --headless --path modules\lunari\tests\smoke_project -s res://check_replacement_project.gd
-bin\godot.windows.editor.dev.x86_64.console.exe --headless --path modules\lunari\tests\smoke_project -s res://check_replacement_benchmarks.gd
-```
 
 ## Design Rules
 
