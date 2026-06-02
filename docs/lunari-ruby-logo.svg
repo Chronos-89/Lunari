@@ -1,49 +1,40 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" role="img" aria-labelledby="title desc">
-  <title id="title">Lunari Ruby Logo</title>
-  <desc id="desc">A rounded ruby crescent mark beside the Lunari wordmark.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 260" role="img" aria-labelledby="title desc">
+  <title id="title">Lunari</title>
+  <desc id="desc">Lunari typed Ruby scripting language logo.</desc>
   <defs>
-    <linearGradient id="ruby-body" x1="78" y1="44" x2="286" y2="258" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ff8bad"/>
-      <stop offset="0.24" stop-color="#f03568"/>
-      <stop offset="0.58" stop-color="#bb1248"/>
-      <stop offset="1" stop-color="#5b0627"/>
+    <linearGradient id="ruby" x1="62" y1="34" x2="307" y2="238" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff8fac"/>
+      <stop offset="0.35" stop-color="#e52958"/>
+      <stop offset="0.72" stop-color="#a70d38"/>
+      <stop offset="1" stop-color="#5a061d"/>
     </linearGradient>
-    <linearGradient id="ruby-edge" x1="92" y1="36" x2="278" y2="250" gradientUnits="userSpaceOnUse">
+    <linearGradient id="rim" x1="72" y1="26" x2="284" y2="224" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#ffd5df"/>
-      <stop offset="0.46" stop-color="#ff7996"/>
-      <stop offset="1" stop-color="#8d0b36"/>
+      <stop offset="0.48" stop-color="#ff6f8e"/>
+      <stop offset="1" stop-color="#7d092b"/>
     </linearGradient>
-    <radialGradient id="ruby-glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(147 98) rotate(62) scale(96 46)">
-      <stop offset="0" stop-color="#ffe7ed" stop-opacity="0.62"/>
-      <stop offset="0.58" stop-color="#ff7a98" stop-opacity="0.22"/>
-      <stop offset="1" stop-color="#ff7a98" stop-opacity="0"/>
-    </radialGradient>
-    <path id="crescent-shape" d="M185 48C111 83 78 172 132 227C174 270 247 264 302 210"/>
-    <clipPath id="crescent-clip">
-      <use href="#crescent-shape" fill="none" stroke="#fff" stroke-width="54" stroke-linecap="round"/>
+    <clipPath id="mark-clip">
+      <path fill-rule="evenodd" d="M166 24C100 46 54 108 54 180c0 47 24 86 61 106 55 31 129 14 177-43-38 22-86 23-124 1-45-26-65-82-47-133 11-31 35-59 66-78 13-8 7-18-21-9Zm28 33c-23 15-41 36-49 60-13 37 1 78 34 99 27 17 61 18 91 3-37 35-88 44-126 22-32-18-49-53-42-91 7-43 42-82 92-93Z"/>
     </clipPath>
-    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#340617" flood-opacity="0.42"/>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#300414" flood-opacity="0.38"/>
     </filter>
   </defs>
 
-  <rect width="900" height="300" rx="34" fill="#15161b"/>
-
-  <g filter="url(#soft-shadow)">
-    <use href="#crescent-shape" fill="none" stroke="url(#ruby-edge)" stroke-width="62" stroke-linecap="round"/>
-    <use href="#crescent-shape" fill="none" stroke="url(#ruby-body)" stroke-width="52" stroke-linecap="round"/>
-    <g clip-path="url(#crescent-clip)">
-      <rect x="54" y="20" width="280" height="280" fill="url(#ruby-glow)"/>
-      <path d="M78 172 128 198 113 247 68 218Z" fill="#ec2858" opacity="0.36"/>
-      <path d="M128 198 196 235 161 278 113 247Z" fill="#7d092f" opacity="0.28"/>
-      <path d="M126 84 184 51 168 95 111 139Z" fill="#ff9bb2" opacity="0.26"/>
-      <path d="M98 164 143 190 204 229" fill="none" stroke="#ffd0da" stroke-opacity="0.23" stroke-width="5"/>
-      <path d="M160 238 230 244 303 209" fill="none" stroke="#42041a" stroke-opacity="0.2" stroke-width="9"/>
+  <g filter="url(#shadow)">
+    <path fill-rule="evenodd" d="M166 24C100 46 54 108 54 180c0 47 24 86 61 106 55 31 129 14 177-43-38 22-86 23-124 1-45-26-65-82-47-133 11-31 35-59 66-78 13-8 7-18-21-9Zm28 33c-23 15-41 36-49 60-13 37 1 78 34 99 27 17 61 18 91 3-37 35-88 44-126 22-32-18-49-53-42-91 7-43 42-82 92-93Z" fill="url(#ruby)"/>
+    <g clip-path="url(#mark-clip)">
+      <path d="M79 184 139 148 180 219 115 246Z" fill="#f73a66" opacity="0.42"/>
+      <path d="M139 148 205 92 180 219Z" fill="#c91546" opacity="0.35"/>
+      <path d="M205 92 302 228 180 219Z" fill="#780826" opacity="0.28"/>
+      <path d="M88 137 139 148 79 184Z" fill="#ff7896" opacity="0.26"/>
+      <path d="M114 248 180 219 242 247Z" fill="#4e0519" opacity="0.22"/>
+      <path d="M77 181 139 148 205 92" fill="none" stroke="#ffd2dc" stroke-width="3" stroke-opacity="0.22"/>
+      <path d="M139 148 180 219 302 228" fill="none" stroke="#2c0310" stroke-width="4" stroke-opacity="0.2"/>
     </g>
+    <path fill-rule="evenodd" d="M166 24C100 46 54 108 54 180c0 47 24 86 61 106 55 31 129 14 177-43-38 22-86 23-124 1-45-26-65-82-47-133 11-31 35-59 66-78 13-8 7-18-21-9Zm28 33c-23 15-41 36-49 60-13 37 1 78 34 99 27 17 61 18 91 3-37 35-88 44-126 22-32-18-49-53-42-91 7-43 42-82 92-93Z" fill="none" stroke="url(#rim)" stroke-width="4"/>
   </g>
 
-  <text x="390" y="127" fill="#fff2f6" font-family="Segoe UI, Arial, sans-serif" font-size="76" font-weight="750" letter-spacing="0">Lunari</text>
-  <text x="394" y="181" fill="#ffcbd8" font-family="Consolas, 'Courier New', monospace" font-size="31">Typed Ruby for Godot</text>
-  <path d="M394 211h390" stroke="#df2757" stroke-width="7" stroke-linecap="round"/>
-  <text x="394" y="252" fill="#ffd76e" font-family="Consolas, 'Courier New', monospace" font-size="21">def ready: void / @export / await signal</text>
+  <text x="350" y="126" fill="#f7edf1" font-family="Segoe UI, Arial, sans-serif" font-size="82" font-weight="750" letter-spacing="0">Lunari</text>
+  <text x="356" y="171" fill="#ffbfce" font-family="Segoe UI, Arial, sans-serif" font-size="30" letter-spacing="0">Typed Ruby for Godot</text>
 </svg>
