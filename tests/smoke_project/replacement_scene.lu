@@ -1,0 +1,36 @@
+require "godot"
+
+class ReplacementScene < Node
+  signal party_ready(summary: String)
+
+  @export @party_name: String = "Lunari Guild"
+  @export_range(1, 99, 1) @starting_level: Integer = 3
+  @onready @hud_label: Label = $HudLabel
+  @summary: String = ""
+  @ready_signal: String = ""
+
+  def initialize: void
+  end
+
+  def ready: void
+    @summary = @party_name + ": Luna power " + (@starting_level + 8).to_s + " / Potion x3"
+
+    if @hud_label is Label
+      @hud_label.text = @summary
+    end
+
+    emit_signal("party_ready", @summary)
+  end
+
+  def result_summary: String
+    return @summary
+  end
+
+  def remember_ready(summary: String): void
+    @ready_signal = summary
+  end
+
+  def captured_signal: String
+    return @ready_signal
+  end
+end

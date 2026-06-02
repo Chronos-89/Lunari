@@ -181,6 +181,22 @@ void LunariCodeGen::_emit_ast_node(const LunariAST::Node &p_node, LunariBytecode
 			case LunariAST::Node::NODE_AWAIT:
 				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_AWAIT, p_node.line, p_node.expression));
 				return;
+			case LunariAST::Node::NODE_BEGIN:
+				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_node.line, "begin"));
+				_emit_ast_block(p_node.children, r_bytecode, p_function, r_current_class);
+				if (!p_node.rescue_children.is_empty()) {
+					p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_node.line, "rescue"));
+					_emit_ast_block(p_node.rescue_children, r_bytecode, p_function, r_current_class);
+				}
+				if (!p_node.else_children.is_empty()) {
+					p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_node.line, "else"));
+					_emit_ast_block(p_node.else_children, r_bytecode, p_function, r_current_class);
+				}
+				if (!p_node.ensure_children.is_empty()) {
+					p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_node.line, "ensure"));
+					_emit_ast_block(p_node.ensure_children, r_bytecode, p_function, r_current_class);
+				}
+				return;
 			case LunariAST::Node::NODE_MATCH: {
 				int match_begin = p_function->instructions.size();
 				p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_MATCH_BEGIN, p_node.line, p_node.expression));

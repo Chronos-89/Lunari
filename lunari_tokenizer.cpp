@@ -145,7 +145,7 @@ LunariTokenizer::Token LunariTokenizer::scan_token() {
 		while (_is_identifier_char(_peek())) {
 			ident += _advance();
 		}
-		if (ident == "require") return _make_token(Token::TK_REQUIRE, ident, ident, start_line, start_column);
+		if (ident == "require" || ident == "require_relative") return _make_token(Token::TK_REQUIRE, ident, ident, start_line, start_column);
 		if (ident == "class") return _make_token(Token::TK_CLASS, ident, ident, start_line, start_column);
 		if (ident == "def") return _make_token(Token::TK_DEF, ident, ident, start_line, start_column);
 		if (ident == "end") return _make_token(Token::TK_END, ident, ident, start_line, start_column);

@@ -1,0 +1,5 @@
+require "godot"
+require "cycle_b"
+
+class CycleA
+end

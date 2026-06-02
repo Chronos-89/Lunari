@@ -17,7 +17,7 @@ static bool _lunari_is_annotation_start(const String &p_line) {
 		ident_end++;
 	}
 	const String annotation_name = p_line.substr(1, ident_end - 1);
-	if (annotation_name != "tool" && annotation_name != "export" && annotation_name != "export_range" && annotation_name != "export_enum" && annotation_name != "export_file" && annotation_name != "export_dir" && annotation_name != "onready" && annotation_name != "rpc") {
+	if (annotation_name != "tool" && annotation_name != "export" && annotation_name != "export_range" && annotation_name != "export_enum" && annotation_name != "export_flags" && annotation_name != "export_flags_2d_render" && annotation_name != "export_flags_2d_physics" && annotation_name != "export_flags_2d_navigation" && annotation_name != "export_flags_3d_render" && annotation_name != "export_flags_3d_physics" && annotation_name != "export_flags_3d_navigation" && annotation_name != "export_flags_avoidance" && annotation_name != "export_file" && annotation_name != "export_dir" && annotation_name != "export_group" && annotation_name != "export_subgroup" && annotation_name != "export_category" && annotation_name != "onready" && annotation_name != "rpc") {
 		return false;
 	}
 	int next = ident_end;
@@ -145,9 +145,9 @@ Vector<String> LunariParser::_split_top_level(const String &p_text, char32_t p_s
 	int brace_depth = 0;
 	for (int i = 0; i < p_text.length(); i++) {
 		char32_t c = p_text[i];
-		if (c == '<') {
+		if (c == '<' && (i + 1 >= p_text.length() || p_text[i + 1] != '=')) {
 			angle_depth++;
-		} else if (c == '>') {
+		} else if (c == '>' && (i == 0 || p_text[i - 1] != '=')) {
 			angle_depth--;
 		} else if (c == '(') {
 			paren_depth++;
@@ -195,7 +195,16 @@ LunariAST::Parameter LunariParser::_parse_parameter(const String &p_text, int p_
 		parameter.name = text.substr(0, colon).strip_edges();
 		String type_and_default = text.substr(colon + 1).strip_edges();
 		int equals = type_and_default.find("=");
-		parameter.type = equals >= 0 ? type_and_default.substr(0, equals).strip_edges() : type_and_default;
+		const bool looks_like_keyword_default = equals < 0 && (type_and_default.is_empty() || type_and_default.begins_with("\"") || type_and_default.begins_with("'") || type_and_default.begins_with(":") || type_and_default.begins_with("[") || type_and_default.begins_with("{") || type_and_default == "true" || type_and_default == "false" || type_and_default == "nil" || type_and_default.is_valid_int() || type_and_default.is_valid_float());
+		if (looks_like_keyword_default) {
+			parameter.is_keyword = true;
+			if (!type_and_default.is_empty()) {
+				parameter.default_value = type_and_default;
+				parameter.has_default_value = true;
+			}
+		} else {
+			parameter.type = equals >= 0 ? type_and_default.substr(0, equals).strip_edges() : type_and_default;
+		}
 		if (equals >= 0) {
 			parameter.default_value = type_and_default.substr(equals + 1).strip_edges();
 			parameter.has_default_value = true;
@@ -245,13 +254,14 @@ LunariAST::Node LunariParser::_parse_class_like(const String &p_line, int p_line
 
 	int lunari_inherit = rest.find("::");
 	int ruby_inherit = rest.find("<");
+	const bool ruby_inheritance = ruby_inherit >= 0 && (lunari_inherit < 0 || lunari_inherit > ruby_inherit);
 	String class_name = rest;
-	if (lunari_inherit >= 0) {
-		class_name = rest.substr(0, lunari_inherit).strip_edges();
-		node.base = rest.substr(lunari_inherit + 2).strip_edges();
-	} else if (ruby_inherit >= 0 && rest.find(">") < ruby_inherit) {
+	if (ruby_inheritance) {
 		class_name = rest.substr(0, ruby_inherit).strip_edges();
 		node.base = rest.substr(ruby_inherit + 1).strip_edges();
+	} else if (lunari_inherit >= 0) {
+		class_name = rest.substr(0, lunari_inherit).strip_edges();
+		node.base = rest.substr(lunari_inherit + 2).strip_edges();
 	}
 	int generic_pos = class_name.find("<");
 	if (generic_pos >= 0 && class_name.ends_with(">")) {
@@ -398,6 +408,11 @@ LunariAST::Node LunariParser::_parse_statement(const String &p_line, int p_line_
 		node.kind = LunariAST::Node::NODE_RETURN;
 		return node;
 	}
+	if (line == "raise" || line.begins_with("raise ")) {
+		node.kind = LunariAST::Node::NODE_CALL;
+		node.expression = line;
+		return node;
+	}
 	if (line.begins_with("return ")) {
 		node.kind = LunariAST::Node::NODE_RETURN;
 		node.expression = line.substr(7).strip_edges();
@@ -430,9 +445,28 @@ LunariAST::Node LunariParser::_parse_statement(const String &p_line, int p_line_
 		node.expression = line == "await" ? String() : line.substr(6).strip_edges();
 		return node;
 	}
+	if (line == "begin") {
+		node.kind = LunariAST::Node::NODE_BEGIN;
+		return node;
+	}
 	if (line.begins_with("match ")) {
 		node.kind = LunariAST::Node::NODE_MATCH;
 		node.expression = line.substr(6).strip_edges();
+		return node;
+	}
+	if (line.begins_with("case ")) {
+		node.kind = LunariAST::Node::NODE_MATCH;
+		node.expression = line.substr(5).strip_edges();
+		return node;
+	}
+	if (line.begins_with("when ")) {
+		node.kind = LunariAST::Node::NODE_MATCH_ARM;
+		node.expression = line.substr(5).strip_edges();
+		return node;
+	}
+	if (line == "else" || line == "else:") {
+		node.kind = LunariAST::Node::NODE_MATCH_ARM;
+		node.expression = "else";
 		return node;
 	}
 	if (line.ends_with(":")) {
@@ -465,6 +499,115 @@ LunariAST::Node LunariParser::_parse_statement(const String &p_line, int p_line_
 		int in_pos = line.find(" in ");
 		node.name = line.substr(4, in_pos - 4).strip_edges();
 		node.expression = line.substr(in_pos + 4).strip_edges();
+		return node;
+	}
+	int each_with_index_do_pos = line.find(".each_with_index do");
+	if (each_with_index_do_pos > 0) {
+		node.kind = LunariAST::Node::NODE_FOR;
+		node.expression = line.substr(0, each_with_index_do_pos).strip_edges();
+		int pipe_open = line.find("|", each_with_index_do_pos);
+		int pipe_close = pipe_open >= 0 ? line.find("|", pipe_open + 1) : -1;
+		if (pipe_open >= 0 && pipe_close > pipe_open) {
+			String params = line.substr(pipe_open + 1, pipe_close - pipe_open - 1).strip_edges();
+			node.name = params.get_slice(",", 0).strip_edges();
+			if (params.get_slice_count(",") > 1) {
+				node.target = params.get_slice(",", 1).strip_edges();
+			}
+		}
+		if (node.name == StringName()) {
+			node.name = "_";
+		}
+		return node;
+	}
+	int reverse_each_do_pos = line.find(".reverse_each do");
+	if (reverse_each_do_pos > 0) {
+		node.kind = LunariAST::Node::NODE_FOR;
+		node.expression = line.substr(0, reverse_each_do_pos).strip_edges();
+		int pipe_open = line.find("|", reverse_each_do_pos);
+		int pipe_close = pipe_open >= 0 ? line.find("|", pipe_open + 1) : -1;
+		if (pipe_open >= 0 && pipe_close > pipe_open) {
+			String params = line.substr(pipe_open + 1, pipe_close - pipe_open - 1).strip_edges();
+			node.name = params.get_slice(",", 0).strip_edges();
+		}
+		if (node.name == StringName()) {
+			node.name = "_";
+		}
+		return node;
+	}
+	int each_key_do_pos = line.find(".each_key do");
+	if (each_key_do_pos > 0) {
+		node.kind = LunariAST::Node::NODE_FOR;
+		node.expression = line.substr(0, each_key_do_pos).strip_edges();
+		int pipe_open = line.find("|", each_key_do_pos);
+		int pipe_close = pipe_open >= 0 ? line.find("|", pipe_open + 1) : -1;
+		if (pipe_open >= 0 && pipe_close > pipe_open) {
+			String params = line.substr(pipe_open + 1, pipe_close - pipe_open - 1).strip_edges();
+			node.name = params.get_slice(",", 0).strip_edges();
+		}
+		if (node.name == StringName()) {
+			node.name = "_";
+		}
+		return node;
+	}
+	int each_value_do_pos = line.find(".each_value do");
+	if (each_value_do_pos > 0) {
+		node.kind = LunariAST::Node::NODE_FOR;
+		node.expression = line.substr(0, each_value_do_pos).strip_edges();
+		int pipe_open = line.find("|", each_value_do_pos);
+		int pipe_close = pipe_open >= 0 ? line.find("|", pipe_open + 1) : -1;
+		if (pipe_open >= 0 && pipe_close > pipe_open) {
+			String params = line.substr(pipe_open + 1, pipe_close - pipe_open - 1).strip_edges();
+			node.name = params.get_slice(",", 0).strip_edges();
+		}
+		if (node.name == StringName()) {
+			node.name = "_";
+		}
+		return node;
+	}
+	int each_do_pos = line.find(".each do");
+	if (each_do_pos > 0) {
+		node.kind = LunariAST::Node::NODE_FOR;
+		node.expression = line.substr(0, each_do_pos).strip_edges();
+		int pipe_open = line.find("|", each_do_pos);
+		int pipe_close = pipe_open >= 0 ? line.find("|", pipe_open + 1) : -1;
+		if (pipe_open >= 0 && pipe_close > pipe_open) {
+			String params = line.substr(pipe_open + 1, pipe_close - pipe_open - 1).strip_edges();
+			node.name = params.get_slice(",", 0).strip_edges();
+			if (params.get_slice_count(",") > 1) {
+				node.target = params.get_slice(",", 1).strip_edges();
+			}
+		}
+		if (node.name == StringName()) {
+			node.name = "_";
+		}
+		return node;
+	}
+	int times_do_pos = line.find(".times do");
+	if (times_do_pos > 0) {
+		node.kind = LunariAST::Node::NODE_FOR;
+		node.expression = "0..." + line.substr(0, times_do_pos).strip_edges();
+		int pipe_open = line.find("|", times_do_pos);
+		int pipe_close = pipe_open >= 0 ? line.find("|", pipe_open + 1) : -1;
+		if (pipe_open >= 0 && pipe_close > pipe_open) {
+			String params = line.substr(pipe_open + 1, pipe_close - pipe_open - 1).strip_edges();
+			node.name = params.get_slice(",", 0).strip_edges();
+		}
+		if (node.name == StringName()) {
+			node.name = "_";
+		}
+		return node;
+	}
+	if (line.find("||=") > 0 || line.find("&&=") > 0) {
+		node.kind = LunariAST::Node::NODE_EXPRESSION;
+		node.expression = line;
+		return node;
+	}
+	int first_dot = line.find(".");
+	int first_paren = line.find("(");
+	int first_equals = line.find("=");
+	if (first_dot > 0 && first_paren > first_dot && line.ends_with(")") && first_equals > first_paren) {
+		node.kind = LunariAST::Node::NODE_CALL;
+		node.expression = line;
 		return node;
 	}
 	int equals = line.find("=");
@@ -508,11 +651,17 @@ void LunariParser::_parse_block(const Vector<String> &p_lines, int &r_index, Vec
 		if (!p_until.is_empty() && line == p_until) {
 			return;
 		}
-		if (p_until == "match_arm" && (line == "end" || line.ends_with(":"))) {
+		if (p_until == "match_arm" && (line == "end" || line.ends_with(":") || line.begins_with("when ") || line == "else")) {
+			return;
+		}
+		if (p_until == "begin" && (line == "end" || line == "else" || line.begins_with("rescue") || line == "ensure")) {
 			return;
 		}
 		if (line == "end" || line == "else" || line.begins_with("elsif ")) {
 			return;
+		}
+		if (line == "public" || line == "private" || line == "protected" || line == "module_function" || line.begins_with("module_function ")) {
+			continue;
 		}
 
 		LunariAST::Node node;
@@ -526,11 +675,11 @@ void LunariParser::_parse_block(const Vector<String> &p_lines, int &r_index, Vec
 		if (line.is_empty()) {
 			continue;
 		}
-		if (line.begins_with("require ")) {
+		if (line.begins_with("require ") || line.begins_with("require_relative ")) {
 			node.kind = LunariAST::Node::NODE_REQUIRE;
 			node.line = line_number;
 			node.raw = line;
-			node.value = line.substr(8).strip_edges();
+			node.value = line.begins_with("require_relative ") ? line.substr(17).strip_edges() : line.substr(8).strip_edges();
 			r_nodes.push_back(node);
 			continue;
 		}
@@ -545,21 +694,62 @@ void LunariParser::_parse_block(const Vector<String> &p_lines, int &r_index, Vec
 			r_nodes.push_back(node);
 			continue;
 		}
-		if (_line_starts_with_keyword(line, "const") || _line_starts_with_keyword(line, "static const") || _line_starts_with_keyword(line, "public const") || _line_starts_with_keyword(line, "private const") || _line_starts_with_keyword(line, "public static const") || _line_starts_with_keyword(line, "private static const")) {
+		if (line.length() > 0 && line[0] >= 'A' && line[0] <= 'Z' && line.find("=") > 0) {
 			node = _parse_const(line, line_number);
 			node.annotations = pending_annotations;
 			pending_annotations.clear();
 			r_nodes.push_back(node);
 			continue;
 		}
-		if (_line_starts_with_keyword(line, "enum")) {
-			node = _parse_enum(line, line_number);
+		if (line.begins_with("const :") || line.begins_with("prop :") || line.begins_with("const \"") || line.begins_with("prop \"") || line.begins_with("const '") || line.begins_with("prop '")) {
+			String declaration = line;
+			bool is_prop = _line_starts_with_keyword(declaration, "prop");
+			declaration = declaration.substr(is_prop ? 4 : 5).strip_edges();
+			String field_name;
+			String type_text;
+			Vector<String> parts = _split_top_level(declaration, ',');
+			if (parts.size() >= 2) {
+				field_name = parts[0].strip_edges();
+				type_text = parts[1].strip_edges();
+				for (int option_index = 2; option_index < parts.size(); option_index++) {
+					String option = parts[option_index].strip_edges();
+					if (option.begins_with("default:")) {
+						node.value = option.substr(8).strip_edges();
+					}
+				}
+			} else {
+				int colon = declaration.find(":");
+				field_name = declaration.substr(0, colon).strip_edges();
+				type_text = declaration.substr(colon + 1).strip_edges();
+			}
+			if (field_name.begins_with(":")) {
+				field_name = field_name.substr(1).strip_edges();
+			}
+			if ((field_name.begins_with("\"") && field_name.ends_with("\"")) || (field_name.begins_with("'") && field_name.ends_with("'"))) {
+				field_name = field_name.substr(1, field_name.length() - 2);
+			}
+			if (node.value.is_empty()) {
+				String normalized_type = type_text.strip_edges();
+				if (normalized_type.contains("| nil") || normalized_type.contains("nil |")) {
+					node.value = "nil";
+				}
+			}
+			node.kind = LunariAST::Node::NODE_FIELD;
+			node.line = line_number;
+			node.raw = line;
+			node.name = "@" + field_name;
+			node.type = type_text;
+			node.is_public = true;
+			node.is_readonly = !is_prop;
 			node.annotations = pending_annotations;
 			pending_annotations.clear();
-			if (node.children.is_empty() && !line.contains("{")) {
-				r_index++;
-				_parse_block(p_lines, r_index, node.children, "end");
-			}
+			r_nodes.push_back(node);
+			continue;
+		}
+		if (_line_starts_with_keyword(line, "const") || _line_starts_with_keyword(line, "static const") || _line_starts_with_keyword(line, "public const") || _line_starts_with_keyword(line, "private const") || _line_starts_with_keyword(line, "public static const") || _line_starts_with_keyword(line, "private static const")) {
+			node = _parse_const(line, line_number);
+			node.annotations = pending_annotations;
+			pending_annotations.clear();
 			r_nodes.push_back(node);
 			continue;
 		}
@@ -594,29 +784,31 @@ void LunariParser::_parse_block(const Vector<String> &p_lines, int &r_index, Vec
 			r_nodes.push_back(node);
 			continue;
 		}
-		if (_line_starts_with_keyword(line, "include") || _line_starts_with_keyword(line, "extend") || _line_starts_with_keyword(line, "implements")) {
-			node.kind = _line_starts_with_keyword(line, "include") ? LunariAST::Node::NODE_INCLUDE : (_line_starts_with_keyword(line, "extend") ? LunariAST::Node::NODE_EXTEND : LunariAST::Node::NODE_IMPLEMENTS);
+		if (_line_starts_with_keyword(line, "include") || _line_starts_with_keyword(line, "prepend") || _line_starts_with_keyword(line, "extend") || _line_starts_with_keyword(line, "implements")) {
+			node.kind = (_line_starts_with_keyword(line, "include") || _line_starts_with_keyword(line, "prepend")) ? LunariAST::Node::NODE_INCLUDE : (_line_starts_with_keyword(line, "extend") ? LunariAST::Node::NODE_EXTEND : LunariAST::Node::NODE_IMPLEMENTS);
 			node.line = line_number;
 			node.raw = line;
-			node.value = line.get_slicec(' ', 1).strip_edges();
+			String keyword = _line_starts_with_keyword(line, "include") ? "include" : (_line_starts_with_keyword(line, "prepend") ? "prepend" : (_line_starts_with_keyword(line, "extend") ? "extend" : "implements"));
+			node.value = line.substr(keyword.length()).strip_edges();
 			r_nodes.push_back(node);
 			continue;
 		}
-		if (_line_starts_with_keyword(line, "attr_reader") || _line_starts_with_keyword(line, "attr_writer") || _line_starts_with_keyword(line, "attr_accessor") || _line_starts_with_keyword(line, "alias") || _line_starts_with_keyword(line, "undef")) {
+		if (_line_starts_with_keyword(line, "attr_reader") || _line_starts_with_keyword(line, "attr_writer") || _line_starts_with_keyword(line, "attr_accessor") || _line_starts_with_keyword(line, "alias") || _line_starts_with_keyword(line, "alias_method") || _line_starts_with_keyword(line, "undef") || _line_starts_with_keyword(line, "undef_method") || _line_starts_with_keyword(line, "remove_method")) {
 			if (_line_starts_with_keyword(line, "attr_reader")) {
 				node.kind = LunariAST::Node::NODE_ATTR_READER;
 			} else if (_line_starts_with_keyword(line, "attr_writer")) {
 				node.kind = LunariAST::Node::NODE_ATTR_WRITER;
 			} else if (_line_starts_with_keyword(line, "attr_accessor")) {
 				node.kind = LunariAST::Node::NODE_ATTR_ACCESSOR;
-			} else if (_line_starts_with_keyword(line, "alias")) {
+			} else if (_line_starts_with_keyword(line, "alias") || _line_starts_with_keyword(line, "alias_method")) {
 				node.kind = LunariAST::Node::NODE_ALIAS;
 			} else {
 				node.kind = LunariAST::Node::NODE_UNDEF;
 			}
 			node.line = line_number;
 			node.raw = line;
-			node.value = line.get_slicec(' ', 1).strip_edges();
+			String keyword = _line_starts_with_keyword(line, "attr_reader") ? "attr_reader" : (_line_starts_with_keyword(line, "attr_writer") ? "attr_writer" : (_line_starts_with_keyword(line, "attr_accessor") ? "attr_accessor" : (_line_starts_with_keyword(line, "alias_method") ? "alias_method" : (_line_starts_with_keyword(line, "alias") ? "alias" : (_line_starts_with_keyword(line, "remove_method") ? "remove_method" : (_line_starts_with_keyword(line, "undef_method") ? "undef_method" : "undef"))))));
+			node.value = line.substr(keyword.length()).strip_edges();
 			r_nodes.push_back(node);
 			continue;
 		}
@@ -646,7 +838,9 @@ void LunariParser::_parse_block(const Vector<String> &p_lines, int &r_index, Vec
 			r_nodes.push_back(node);
 			continue;
 		}
-		if ((_line_starts_with_keyword(line, "public") || _line_starts_with_keyword(line, "private") || _line_starts_with_keyword(line, "static") || line.begins_with("@") || line.begins_with("@@")) && line.contains(":")) {
+		int member_equals = member_line.find("=");
+		String member_lhs = member_equals >= 0 ? member_line.substr(0, member_equals).strip_edges() : member_line;
+		if ((_line_starts_with_keyword(line, "public") || _line_starts_with_keyword(line, "private") || _line_starts_with_keyword(line, "static") || line.begins_with("@") || line.begins_with("@@")) && member_lhs.contains(":")) {
 			node = _parse_field(line, line_number);
 			node.annotations = pending_annotations;
 			pending_annotations.clear();
@@ -655,6 +849,34 @@ void LunariParser::_parse_block(const Vector<String> &p_lines, int &r_index, Vec
 		}
 
 		node = _parse_statement(line, line_number);
+		if (node.kind == LunariAST::Node::NODE_BEGIN) {
+			r_index++;
+			_parse_block(p_lines, r_index, node.children, "begin");
+			if (r_index < p_lines.size()) {
+				String boundary = p_lines[r_index].strip_edges();
+				if (boundary.begins_with("rescue")) {
+					node.value = boundary;
+					r_index++;
+					_parse_block(p_lines, r_index, node.rescue_children, "begin");
+					if (r_index < p_lines.size()) {
+						boundary = p_lines[r_index].strip_edges();
+					}
+				}
+				if (boundary == "else") {
+					r_index++;
+					_parse_block(p_lines, r_index, node.else_children, "begin");
+					if (r_index < p_lines.size()) {
+						boundary = p_lines[r_index].strip_edges();
+					}
+				}
+				if (boundary == "ensure") {
+					r_index++;
+					_parse_block(p_lines, r_index, node.ensure_children, "begin");
+				}
+			}
+			r_nodes.push_back(node);
+			continue;
+		}
 		if (node.kind == LunariAST::Node::NODE_MATCH) {
 			r_index++;
 			while (r_index < p_lines.size()) {
@@ -724,10 +946,10 @@ LunariParser::Result LunariParser::parse(const String &p_source) const {
 	for (int i = 0; i < lines.size(); i++) {
 		const int line_number = i + 1;
 		String line = lines[i].strip_edges();
-		if (line.is_empty() || line.begins_with("#") || line.begins_with("require ")) {
+		if (line.is_empty() || line.begins_with("#") || line.begins_with("require ") || line.begins_with("require_relative ")) {
 			continue;
 		}
-		if (line.begins_with("type ") || _line_starts_with_keyword(line, "attr_reader") || _line_starts_with_keyword(line, "attr_writer") || _line_starts_with_keyword(line, "attr_accessor") || _line_starts_with_keyword(line, "alias") || _line_starts_with_keyword(line, "undef")) {
+		if (line.begins_with("type ") || _line_starts_with_keyword(line, "attr_reader") || _line_starts_with_keyword(line, "attr_writer") || _line_starts_with_keyword(line, "attr_accessor") || _line_starts_with_keyword(line, "alias") || _line_starts_with_keyword(line, "alias_method") || _line_starts_with_keyword(line, "define_method") || _line_starts_with_keyword(line, "undef") || _line_starts_with_keyword(line, "undef_method") || _line_starts_with_keyword(line, "remove_method")) {
 			continue;
 		}
 
@@ -782,7 +1004,7 @@ LunariParser::Result LunariParser::parse(const String &p_source) const {
 		}
 
 		if (in_method) {
-			if (line.begins_with("def ") || line.begins_with("class ") || line.begins_with("module ") || line.begins_with("if ") || line.begins_with("unless ") || line.begins_with("while ") || line.begins_with("until ") || line.begins_with("for ")) {
+			if (line.begins_with("def ") || line.begins_with("class ") || line.begins_with("module ") || line == "begin" || line.begins_with("if ") || line.begins_with("unless ") || line.begins_with("while ") || line.begins_with("until ") || line.begins_with("for ") || line.contains(" do |") || line.ends_with(" do")) {
 				method_depth++;
 			}
 			continue;

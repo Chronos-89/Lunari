@@ -16,6 +16,7 @@ public:
 		String default_value;
 		bool has_default_value = false;
 		bool is_rest = false;
+		bool is_keyword = false;
 		bool is_keyword_rest = false;
 		bool is_block = false;
 		int line = 1;
@@ -61,6 +62,7 @@ public:
 			NODE_YIELD,
 			NODE_SUPER,
 			NODE_AWAIT,
+			NODE_BEGIN,
 			NODE_MATCH,
 			NODE_MATCH_ARM,
 			NODE_EXPRESSION,
@@ -79,11 +81,14 @@ public:
 		Vector<String> annotations;
 		Vector<Node> children;
 		Vector<Node> else_children;
+		Vector<Node> rescue_children;
+		Vector<Node> ensure_children;
 		bool is_public = false;
 		bool is_private = false;
 		bool is_abstract = false;
 		bool is_class_method = false;
 		bool is_static = false;
+		bool is_readonly = false;
 		int line = 1;
 		int column = 1;
 	};

@@ -1,0 +1,4 @@
+require "godot"
+
+class RenameOldDependency
+end

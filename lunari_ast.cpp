@@ -44,6 +44,7 @@ String LunariAST::kind_name(Node::Kind p_kind) {
 		case Node::NODE_YIELD: return "Yield";
 		case Node::NODE_SUPER: return "Super";
 		case Node::NODE_AWAIT: return "Await";
+		case Node::NODE_BEGIN: return "Begin";
 		case Node::NODE_MATCH: return "Match";
 		case Node::NODE_MATCH_ARM: return "MatchArm";
 		case Node::NODE_EXPRESSION: return "Expression";

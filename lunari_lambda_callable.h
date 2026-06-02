@@ -13,6 +13,8 @@ class LunariScriptInstance;
 class LunariLambdaCallable : public CallableCustom {
 	Ref<LunariScript> script;
 	StringName lambda_name;
+	Dictionary proc;
+	ObjectID owner_id;
 	Vector<Variant> captures;
 	uint32_t h = 0;
 
@@ -31,4 +33,5 @@ public:
 	void call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, Callable::CallError &r_call_error) const override;
 
 	LunariLambdaCallable(const Ref<LunariScript> &p_script, const StringName &p_lambda_name, const Vector<Variant> &p_captures = Vector<Variant>());
+	LunariLambdaCallable(const Ref<LunariScript> &p_script, const Dictionary &p_proc, ObjectID p_owner_id = ObjectID());
 };

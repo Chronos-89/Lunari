@@ -1,0 +1,9 @@
+require "godot"
+
+class HotReloadState < Node
+  @value: Integer = 1
+  @nested: Variant = {}
+
+  def ready: void
+  end
+end

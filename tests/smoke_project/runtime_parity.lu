@@ -1,0 +1,30 @@
+require "godot"
+
+class RuntimeParity < Node
+  signal pinged(value: Integer)
+
+  @label: Label
+  @result: Integer = 0
+  @await_state: Variant
+
+  def add(a: Integer, b: Integer): Integer
+    return a + b
+  end
+
+  def with_default(a: Integer, b: Integer = 4): Integer
+    return a + b
+  end
+
+  def create_label(text: String): String
+    @label = Label.new
+    @label.text = text
+    @label.set_position(Vector2(4, 8))
+    add_child(@label)
+    return @label.text
+  end
+
+  def wait_for_ping: Variant
+    @await_state = await self.pinged
+    return @await_state
+  end
+end

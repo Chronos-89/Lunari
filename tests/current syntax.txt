@@ -4,17 +4,28 @@ type UserName = String
 type GreetingText = String
 type MaybeGreeting = String | nil
 
+module NameFormatter
+  def format_name(name: UserName): UserName
+    return name.capitalize
+  end
+end
+
 class Greeter
+  include NameFormatter
+
   @name: UserName
+  @punctuation: String = "!"
 
   attr_reader :name
+  attr_accessor :punctuation
 
-  def initialize(name: UserName): void
-    @name = name.capitalize
+  def initialize(name: UserName, punctuation: String = "!"): void
+    @name = format_name(name)
+    @punctuation = punctuation
   end
 
   def salute: GreetingText
-    return "Hello " + @name + "!"
+    return "Hello " + @name + @punctuation
   end
 
   def maybe_salute(enabled: Boolean): MaybeGreeting

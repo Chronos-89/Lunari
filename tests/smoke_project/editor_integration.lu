@@ -1,0 +1,29 @@
+require "godot"
+
+class EditorIntegration < Node
+  signal greeted(message: String)
+
+  @export_category("Greeting")
+  @export @title: String = "Hello"
+  @export_range(0, 10, 1) @level: Integer = 3
+  @export_enum("Idle", "Run", "Jump") @state: String = "Idle"
+  @export_flags("Fire", "Ice", "Wind") @elements: Integer = 0
+  @export_flags_2d_physics @physics_layers: Integer = 1
+  @export_flags_3d_render @render_layers: Integer = 1
+  @export_file("*.svg") @icon_path: String = "res://icon.svg"
+  @export_group("Paths", "path_")
+  @export_dir @folder_path: String = "res://"
+  @export_subgroup("Targets", "target_")
+  @export @icon: Resource
+  @export @target: Node
+  @onready @child_label: Label = $ChildLabel
+  @ready_text: String = ""
+
+  def ready: void
+    if @child_label is Label
+      @ready_text = @child_label.text
+    end
+
+    emit_signal("greeted", @title)
+  end
+end

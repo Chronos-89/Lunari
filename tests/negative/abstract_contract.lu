@@ -1,0 +1,8 @@
+require "godot"
+
+abstract class AbstractRunner
+  abstract def run: String
+end
+
+class BadRunner < AbstractRunner
+end

@@ -1,62 +1,63 @@
 require "godot"
+require_relative "shared_greeter"
 
 type UserName = String
 type GreetingText = String
+type MaybeGreeting = String | nil
+
+module NameFormatter
+  def format_name(name: UserName): UserName
+    return name.capitalize
+  end
+end
 
 class Greeter
-  enum GreetingStyle { Normal, Loud = 2 }
-
-  const DefaultPunctuation: String = "!"
-  static @created: Integer = 0
+  include NameFormatter
 
   @name: UserName
-  @punctuation: String = DefaultPunctuation
+  @punctuation: String = "!"
 
   attr_reader :name
+  attr_accessor :punctuation
 
-  def initialize(name: UserName): void
-    @name = name.capitalize
-    Greeter.@created = Greeter.@created + 1
+  def initialize(name: UserName, punctuation: String = "!"): void
+    @name = format_name(name)
+    @punctuation = punctuation
   end
 
   def salute: GreetingText
     return "Hello " + @name + @punctuation
   end
+
+  def maybe_salute(enabled: Boolean): MaybeGreeting
+    if !enabled
+      return nil
+    end
+    return salute
+  end
 end
 
 class LoudGreeter < Greeter
   def initialize(name: UserName): void
-    super(name)
+    super(name, "!")
   end
 
   def salute: GreetingText
-    return super.to_upper
+    return super.upcase
   end
 end
 
-class Main :: Node
-  signal greeted(message: String)
-
+class Main < Node
   @label: Label
-  @icon: Resource
-  @parent_node: Node
-
-  @export @message: String = ""
-  @seen_greeting: Boolean = false
-  @count: Integer = 0
+  @message: GreetingText = ""
+  @seen_process: Boolean = false
   @words: Array<String> = ["Hello", " ", "World"]
 
   def ready: void
     greeter: Greeter = LoudGreeter.new("world")
+    shared: SharedGreeter = SharedGreeter.new("moon")
 
-    @icon = load("res://icon.svg")
-    @parent_node = self.get_parent()
-    self.name = "LunariMain"
-    self.greeted.connect(self.on_greeted)
-
-    @label = Label.new
-    @label.set_position(Vector2(4, 8))
-
+    @message = ""
     for word in @words
       @message = @message + word
     end
@@ -65,28 +66,17 @@ class Main :: Node
       "Hello World":
         @message = greeter.salute
       else:
-        @message = "Greeting failed"
+        @message = shared.salute
     end
 
-    if @label is Label
-      typed_label: Label = @label as Label
-      typed_label.text = @message
-    end
-
-    while @count < 2
-      @count = @count + 1
-    end
-
-    @label.text = @message if @count == 2
-    emit_signal("greeted", @message)
+    @label = Label.new
+    @label.text = @message
     add_child(@label)
   end
 
   def process(delta: Float): void
-    @count = @count + 1
-  end
-
-  def on_greeted(message: String): void
-    @seen_greeting = true
+    if delta >= 0.0
+      @seen_process = true
+    end
   end
 end

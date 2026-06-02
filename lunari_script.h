@@ -38,6 +38,9 @@ class LunariExpressionParser {
 	Variant _parse_postfix(const Variant &p_value);
 	Variant _parse_call_or_identifier(const String &p_identifier);
 	Vector<Variant> _parse_arguments();
+	Variant _parse_proc_block_literal(bool p_strict_arity = false);
+	Variant _parse_proc_do_block_literal(bool p_strict_arity = false);
+	Variant _call_proc(const Dictionary &p_proc, const Vector<Variant> &p_args);
 	Variant _call_global(const String &p_identifier, const Vector<Variant> &p_args);
 	Variant _apply_binary(const String &p_operator, const Variant &p_left, const Variant &p_right);
 	int _get_precedence(const String &p_operator) const;
@@ -53,6 +56,8 @@ class LunariObject : public RefCounted {
 
 	StringName class_name;
 	HashMap<StringName, Variant> fields;
+	HashMap<StringName, Variant> singleton_methods;
+	bool frozen = false;
 
 protected:
 	static void _bind_methods() {}
@@ -60,10 +65,56 @@ protected:
 public:
 	void set_lunari_class_name(const StringName &p_class_name) { class_name = p_class_name; }
 	StringName get_lunari_class_name() const { return class_name; }
-	void set_lunari_field(const StringName &p_name, const Variant &p_value) { fields[p_name] = p_value; }
+	bool set_lunari_field(const StringName &p_name, const Variant &p_value) {
+		if (frozen) {
+			return false;
+		}
+		fields[p_name] = p_value;
+		return true;
+	}
+	bool has_lunari_field(const StringName &p_name) const { return fields.has(p_name); }
 	Variant get_lunari_field(const StringName &p_name) const {
 		HashMap<StringName, Variant>::ConstIterator E = fields.find(p_name);
 		return E ? E->value : Variant();
+	}
+	Array get_lunari_field_names() const {
+		Array names;
+		for (const KeyValue<StringName, Variant> &field : fields) {
+			names.push_back(field.key);
+		}
+		return names;
+	}
+	bool set_lunari_singleton_method(const StringName &p_name, const Variant &p_proc) {
+		if (frozen) {
+			return false;
+		}
+		singleton_methods[p_name] = p_proc;
+		return true;
+	}
+	bool has_lunari_singleton_method(const StringName &p_name) const { return singleton_methods.has(p_name); }
+	Variant get_lunari_singleton_method(const StringName &p_name) const {
+		HashMap<StringName, Variant>::ConstIterator E = singleton_methods.find(p_name);
+		return E ? E->value : Variant();
+	}
+	Array get_lunari_singleton_method_names() const {
+		Array names;
+		for (const KeyValue<StringName, Variant> &method : singleton_methods) {
+			names.push_back(method.key);
+		}
+		return names;
+	}
+	void freeze_lunari_object() { frozen = true; }
+	bool is_lunari_frozen() const { return frozen; }
+	Ref<LunariObject> duplicate_lunari_object(bool p_clone) const {
+		Ref<LunariObject> copy;
+		copy.instantiate();
+		copy->class_name = class_name;
+		copy->fields = fields;
+		if (p_clone) {
+			copy->singleton_methods = singleton_methods;
+			copy->frozen = frozen;
+		}
+		return copy;
 	}
 };
 
@@ -111,6 +162,8 @@ public:
 
 	Variant get_field(const StringName &p_name) const;
 	void set_field(const StringName &p_name, const Variant &p_value);
+	bool has_field(const StringName &p_name) const;
+	Array get_field_names() const;
 
 	LunariScriptInstance(const Ref<LunariScript> &p_script, Object *p_owner);
 	~LunariScriptInstance();
@@ -118,8 +171,10 @@ public:
 
 class LunariScript : public Script {
 	GDCLASS(LunariScript, Script);
+	friend class LunariLambdaCallable;
 	friend class LunariVM;
 	friend class LunariScriptInstance;
+	friend class LunariExpressionParser;
 
 public:
 	struct FieldInfo {
@@ -136,16 +191,37 @@ public:
 		PropertyUsageFlags usage = PROPERTY_USAGE_DEFAULT;
 		Vector<String> annotations;
 		bool is_static = false;
+		bool is_readonly = false;
 	};
 
 	struct UserClassInfo {
 		StringName name;
 		StringName base;
 		Vector<FieldInfo> fields;
+		Vector<StringName> prepends;
+		Vector<StringName> includes;
+		Vector<StringName> extends;
+		Vector<StringName> class_method_mixins;
+		Vector<StringName> enum_value_names;
+		HashMap<StringName, StringName> method_aliases;
+		HashMap<StringName, Variant> defined_methods;
+		HashSet<StringName> readable_attributes;
+		HashSet<StringName> writable_attributes;
+		HashSet<StringName> removed_methods;
+		HashSet<StringName> undefined_methods;
+		HashSet<StringName> private_methods;
+		HashSet<StringName> protected_methods;
+		HashSet<StringName> private_class_methods;
+		HashSet<StringName> protected_class_methods;
+		HashSet<StringName> module_functions;
+		bool has_attached_class = false;
+		bool is_sealed = false;
+		bool is_module = false;
 	};
 
 private:
 	String source;
+	String runtime_source;
 	StringName native_base = "Node";
 	StringName class_name;
 	Vector<FieldInfo> fields;
@@ -153,6 +229,7 @@ private:
 	Vector<MethodInfo> signals;
 	HashMap<StringName, UserClassInfo> user_classes;
 	HashMap<StringName, Variant> static_fields;
+	HashMap<StringName, StringName> type_aliases;
 	LunariBytecode bytecode;
 	String compiler_error;
 	bool bytecode_compiled = false;
@@ -164,16 +241,31 @@ private:
 
 	void _parse();
 	static bool _line_starts_with_keyword(const String &p_line, const String &p_keyword);
-	static Variant _parse_literal(const String &p_value, const StringName &p_type, bool *r_valid = nullptr);
+	Variant _parse_literal(const String &p_value, const StringName &p_type, bool *r_valid = nullptr) const;
 	bool _run_initialize(LunariScriptInstance *p_instance);
 	bool _run_ready(LunariScriptInstance *p_instance);
 	bool _bind_method_arguments(const String &p_method_line, const Vector<Variant> *p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals);
+	bool _bind_bytecode_method_arguments(const StringName &p_owner_class, const StringName &p_method, const Vector<Variant> *p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals);
 	bool _execute_method_lines(const Vector<String> &p_body, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, Ref<LunariObject> p_self = Ref<LunariObject>(), Variant *r_return_value = nullptr);
 	bool _truthy(const Variant &p_value) const;
 	bool _execute_method_body(const String &p_method, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, Ref<LunariObject> p_self = Ref<LunariObject>(), Variant *r_return_value = nullptr, const StringName &p_class_name = StringName(), const Vector<Variant> *p_args = nullptr);
 	bool _execute_statement(const String &p_statement, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, Ref<LunariObject> p_self = Ref<LunariObject>(), bool *r_did_return = nullptr, Variant *r_return_value = nullptr);
 	Variant _eval_expression(const String &p_expression, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, bool *r_valid = nullptr);
-	bool _execute_bytecode_method(const StringName &p_owner_class, const StringName &p_method, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, Ref<LunariObject> p_self = Ref<LunariObject>(), Variant *r_return_value = nullptr);
+	bool _execute_bytecode_method(const StringName &p_owner_class, const StringName &p_method, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, Ref<LunariObject> p_self = Ref<LunariObject>(), Variant *r_return_value = nullptr, const Vector<Variant> *p_args = nullptr);
+	String _find_static_field_key(const StringName &p_class_name, const StringName &p_field_name, bool p_inherit = true) const;
+	bool _find_instance_method_owner(const StringName &p_class_name, const StringName &p_method, StringName *r_owner_class = nullptr, StringName *r_method_name = nullptr) const;
+	bool _find_static_method_owner(const StringName &p_class_name, const StringName &p_method, StringName *r_owner_class = nullptr, StringName *r_method_name = nullptr) const;
+	void _invoke_module_hook(const StringName &p_mixin, const StringName &p_hook, const StringName &p_receiver_class);
+	bool _find_defined_method(const StringName &p_class_name, const StringName &p_method, Variant *r_proc = nullptr, StringName *r_owner_class = nullptr) const;
+	bool _is_private_instance_method(const StringName &p_class_name, const StringName &p_method) const;
+	bool _is_private_static_method(const StringName &p_class_name, const StringName &p_method) const;
+	bool _is_protected_instance_method(const StringName &p_class_name, const StringName &p_method) const;
+	bool _is_protected_static_method(const StringName &p_class_name, const StringName &p_method) const;
+	bool _is_lunari_kind_of(const StringName &p_class_name, const StringName &p_expected_class) const;
+	int _get_user_method_arity(const StringName &p_owner_class, const StringName &p_method, bool p_static) const;
+	Array _get_instance_method_names(const StringName &p_class_name, const StringName &p_visibility = StringName(), bool p_include_inherited = true) const;
+	Array _get_static_method_names(const StringName &p_class_name, const StringName &p_visibility = StringName(), bool p_include_inherited = true) const;
+	Array _get_sealed_subclasses(const StringName &p_class_name) const;
 
 protected:
 	static void _bind_methods();
@@ -219,13 +311,19 @@ public:
 	const Vector<FieldInfo> &get_lunari_fields();
 	const Vector<MethodInfo> &get_lunari_methods();
 	bool has_user_class(const StringName &p_class_name);
-	bool has_static_field(const StringName &p_class_name, const StringName &p_field_name);
-	Variant get_static_field(const StringName &p_class_name, const StringName &p_field_name, bool *r_valid = nullptr);
+	bool has_static_field(const StringName &p_class_name, const StringName &p_field_name, bool p_inherit = true);
+	bool has_static_method(const StringName &p_class_name, const StringName &p_method);
+	Variant get_static_field(const StringName &p_class_name, const StringName &p_field_name, bool *r_valid = nullptr, bool p_inherit = true);
 	void set_static_field(const StringName &p_class_name, const StringName &p_field_name, const Variant &p_value);
+	Variant remove_static_field(const StringName &p_class_name, const StringName &p_field_name, bool *r_valid = nullptr);
 	Variant call_static_method(const StringName &p_class_name, const StringName &p_method, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr);
 	String disassemble_bytecode();
+	String format_source_code(const String &p_code = String()) const;
+	Array collect_outline(const String &p_code = String()) const;
+	Array find_references(const StringName &p_symbol, const String &p_code = String()) const;
+	Dictionary rename_symbol(const StringName &p_old_name, const StringName &p_new_name, const String &p_code = String()) const;
 	Variant construct_user_class(const StringName &p_class_name, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr);
-	Variant call_user_method(const Ref<LunariObject> &p_object, const StringName &p_method, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr);
+	Variant call_user_method(const Ref<LunariObject> &p_object, const StringName &p_method, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr, bool p_allow_private = false);
 	void initialize_instance(LunariScriptInstance *p_instance);
 	void call_ready(LunariScriptInstance *p_instance);
 	void _instance_created(Object *p_owner);
@@ -327,6 +425,8 @@ public:
 	void get_recognized_extensions(List<String> *p_extensions) const override;
 	bool handles_type(const String &p_type) const override;
 	String get_resource_type(const String &p_path) const override;
+	void get_dependencies(const String &p_path, List<String> *p_dependencies, bool p_add_types = false) override;
+	Error rename_dependencies(const String &p_path, const HashMap<String, String> &p_map) override;
 };
 
 class ResourceFormatSaverLunariScript : public ResourceFormatSaver {

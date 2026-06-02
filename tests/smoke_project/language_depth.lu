@@ -1,0 +1,72 @@
+require "godot"
+
+type MaybeText = String | nil
+type Scores = Array<Integer>
+type Bag = Hash<String, Integer>
+
+module LanguageDepthSuffix
+  def suffix: String
+    return "!"
+  end
+end
+
+module LanguageDepthLoud
+  def decorate(text: String): String
+    return text.upcase
+  end
+end
+
+abstract class LanguageDepthFormatter
+  abstract def format(text: String): String
+end
+
+class LanguageDepthConcreteFormatter < LanguageDepthFormatter
+  include LanguageDepthSuffix
+  prepend LanguageDepthLoud
+
+  def format(text: String): String
+    decorated: String = decorate(text.capitalize)
+    ending: String = suffix
+    return decorated + ending
+  end
+end
+
+class LanguageDepth < Node
+  @message: String = ""
+  @maybe: MaybeText = "moon"
+  @scores: Scores = [1, 2, 3]
+  @bag: Bag = { "hp" => 10, "mp" => 4 }
+
+  def with_yield(name: String, &block: Proc<String, String>): String
+    if block_given?
+      return yield(name)
+    end
+
+    return name
+  end
+
+  def ready: void
+    formatter: LanguageDepthConcreteFormatter = LanguageDepthConcreteFormatter.new
+
+    doubled: Array<Integer> = @scores.map(lambda { |score| score * 2 })
+    selected: Array<Integer> = doubled.select(lambda { |score| score > 2 })
+    total: Integer = selected.reduce(0, lambda { |sum, score| sum + score })
+    greeter: Proc<String, String> = lambda { |name: String| "Hello " + name.capitalize }
+    loud: Proc<String, String> = lambda { |name: String| name.upcase }
+    proc_message: String = with_yield("world", greeter)
+    lambda_message: String = loud.call("lunari")
+
+    if @maybe is String
+      formatted: String = formatter.format(@maybe)
+      total_text: String = total.to_s
+      hp_text: String = @bag.fetch("hp", 0).to_s
+      @message = formatted + " " + proc_message + " " + lambda_message + " " + total_text + " " + hp_text
+    else
+      @message = "missing"
+    end
+  end
+
+  def result_message: String
+    return @message
+  end
+end

@@ -1,0 +1,23 @@
+require "godot"
+
+class BenchmarkLunari < Node
+  @label: Label
+
+  def initialize: void
+    @label = Label.new
+    add_child(@label)
+  end
+
+  def arithmetic(seed: Integer): Integer
+    return seed * 3 + 42
+  end
+
+  def strings(seed: Integer): String
+    return "x" + seed.to_s
+  end
+
+  def node_property(seed: Integer): String
+    @label.text = "value " + seed.to_s
+    return @label.text
+  end
+end

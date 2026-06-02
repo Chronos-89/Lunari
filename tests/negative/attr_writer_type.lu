@@ -1,0 +1,14 @@
+require "godot"
+
+class AccessorTarget
+  @level: Integer = 1
+
+  attr_accessor :level
+end
+
+class Main < Node
+  def ready: void
+    target: AccessorTarget = AccessorTarget.new
+    target.level = "wrong"
+  end
+end

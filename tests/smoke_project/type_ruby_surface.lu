@@ -1,0 +1,101 @@
+require "godot"
+
+type UserName = String
+type GreetingText = String
+type MaybeGreeting = String | nil
+
+class TypeRubySurface < Node
+  @message: GreetingText = ""
+  @words: Array<String> = ["Hello", " ", "World"]
+
+  def ready: void
+    greeter: TypeRubyGreeter = TypeRubyGreeter.new("world", "!")
+    greeter.punctuation = "?"
+
+    for word in @words
+    @message = @message + word
+    end
+
+    protected_reader: TypeRubyProtectedReader = TypeRubyProtectedReader.new
+    protected_message: String = protected_reader.read_from_peer(TypeRubyProtectedBase.new)
+    accessors: TypeRubyAccessors = TypeRubyAccessors.new("Ada", 3)
+    accessors.level = accessors.level + 1
+    accessor_text: String = accessors.first_name + accessors.last_name
+    aliases: TypeRubyAliases = TypeRubyAliases.new
+    alias_text: String = aliases.greet
+    alias_enabled: Boolean = aliases.enabled?
+    @message = greeter.name + greeter.punctuation + " " + greeter.salute
+  end
+end
+
+class TypeRubyGreeter
+  @@created: Integer = 0
+  @name: UserName
+  @punctuation: String = "!"
+
+  attr_reader :name
+  attr_accessor :punctuation
+
+  def initialize(name: UserName, punctuation: String = "!"): void
+    @@created = @@created + 1
+    @name = name.capitalize
+    @punctuation = punctuation
+  end
+
+  def self.created: Integer
+    return @@created
+  end
+
+  def salute: GreetingText
+    return "Hello " + @name + @punctuation
+  end
+
+  def maybe_salute(enabled: Boolean): MaybeGreeting
+    if !enabled
+      return nil
+    end
+    return self.salute
+  end
+end
+
+class TypeRubyProtectedBase
+  protected
+
+  def secret: String
+    return "family"
+  end
+end
+
+class TypeRubyProtectedReader < TypeRubyProtectedBase
+  def read_from_peer(peer: TypeRubyProtectedBase): String
+    return peer.secret
+  end
+end
+
+class TypeRubyAccessors
+  @first_name: String
+  @last_name: String = "Lovelace"
+  @level: Integer
+
+  attr_reader :first_name, :last_name
+  attr_accessor :level
+
+  def initialize(first_name: String, level: Integer): void
+    @first_name = first_name
+    @level = level
+  end
+end
+
+class TypeRubyAliases
+  def salute: String
+    return "hello"
+  end
+
+  alias greet salute
+
+  def active?: Boolean
+    return true
+  end
+
+  alias_method :enabled?, :active?
+end

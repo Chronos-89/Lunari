@@ -1,0 +1,53 @@
+require "godot"
+
+type ActorName = String
+type HitPoints = Integer
+type ItemList = Array<String>
+
+module ReplacementLevelCurve
+  def level_bonus(level: Integer): Integer
+    return level * 2
+  end
+end
+
+class ReplacementStats
+  @hp: HitPoints = 30
+  @attack: Integer = 4
+  @defense: Integer = 2
+
+  attr_accessor :hp, :attack, :defense
+
+  def score: Integer
+    return @hp + @attack + @defense
+  end
+end
+
+class ReplacementActor
+  include ReplacementLevelCurve
+
+  @name: ActorName
+  @level: Integer = 1
+  @stats: ReplacementStats
+  @items: ItemList = ["Potion"]
+
+  attr_reader :name, :level, :items
+
+  def initialize(name: ActorName, level: Integer = 1): void
+    @name = name.capitalize
+    @level = level
+    @stats = ReplacementStats.new
+  end
+
+  def power: Integer
+    return @stats.attack + level_bonus(@level) + @items.size
+  end
+
+  def damage(amount: Integer): HitPoints
+    @stats.hp = @stats.hp - amount
+    return @stats.hp
+  end
+
+  def summary: String
+    return @name + " power " + power.to_s
+  end
+end

@@ -4,12 +4,16 @@
 
 #include "lunari_godot_api.h"
 
+#include "core/io/dir_access.h"
+#include "core/io/file_access.h"
+#include "core/io/json.h"
 #include "core/object/class_db.h"
+#include "core/object/method_bind.h"
 
 HashMap<StringName, LunariGodotApi::ClassInfo> LunariGodotApi::classes;
 bool LunariGodotApi::generated = false;
 
-StringName LunariGodotApi::_type_from_property(const PropertyInfo &p_info, bool p_nil_as_void) {
+StringName LunariGodotApi::type_from_property(const PropertyInfo &p_info, bool p_nil_as_void) {
 	switch (p_info.type) {
 		case Variant::NIL:
 			return p_nil_as_void ? StringName("void") : StringName("Variant");
@@ -95,6 +99,78 @@ StringName LunariGodotApi::_type_from_property(const PropertyInfo &p_info, bool 
 	return "Variant";
 }
 
+bool LunariGodotApi::_has_property_member(const ClassInfo &p_class, const StringName &p_member) {
+	return p_class.properties.has(p_member);
+}
+
+bool LunariGodotApi::_has_method_member(const ClassInfo &p_class, const StringName &p_member) {
+	return p_class.methods.has(p_member);
+}
+
+bool LunariGodotApi::_has_signal_member(const ClassInfo &p_class, const StringName &p_member) {
+	return p_class.signals.has(p_member);
+}
+
+bool LunariGodotApi::_has_constant_member(const ClassInfo &p_class, const StringName &p_member) {
+	return p_class.constants.has(p_member);
+}
+
+bool LunariGodotApi::_find_class_member_owner(const StringName &p_class, const StringName &p_member, bool (*p_has_member)(const ClassInfo &, const StringName &), StringName *r_owner) {
+	generate();
+	StringName current = p_class;
+	while (current != StringName()) {
+		HashMap<StringName, ClassInfo>::Iterator E = classes.find(current);
+		if (!E) {
+			return false;
+		}
+		if (p_has_member(E->value, p_member)) {
+			if (r_owner) {
+				*r_owner = current;
+			}
+			return true;
+		}
+		current = E->value.base;
+	}
+	return false;
+}
+
+static String _lunari_variant_default_to_source(const Variant &p_value) {
+	if (p_value.get_type() == Variant::STRING) {
+		return "\"" + String(p_value).c_escape() + "\"";
+	}
+	if (p_value.get_type() == Variant::STRING_NAME) {
+		return ":" + String(StringName(p_value));
+	}
+	if (p_value.get_type() == Variant::NODE_PATH) {
+		return "\"" + String(NodePath(p_value)).c_escape() + "\"";
+	}
+	if (p_value.get_type() == Variant::NIL) {
+		return "nil";
+	}
+	return p_value.stringify();
+}
+
+static String _lunari_method_signature_from_info(const MethodInfo &p_info, const StringName &p_return_type, const Vector<Variant> &p_defaults) {
+	String signature = String(p_info.name) + "(";
+	const int required_count = MAX(0, p_info.arguments.size() - p_defaults.size());
+	for (int i = 0; i < p_info.arguments.size(); i++) {
+		if (i > 0) {
+			signature += ", ";
+		}
+		const PropertyInfo &argument = p_info.arguments[i];
+		String argument_name = argument.name.is_empty() ? vformat("arg%d", i) : String(argument.name);
+		signature += argument_name + ": " + String(LunariGodotApi::type_from_property(argument));
+		if (i >= required_count) {
+			signature += " = " + _lunari_variant_default_to_source(p_defaults[i - required_count]);
+		}
+	}
+	signature += ")";
+	if (p_return_type != StringName()) {
+		signature += ": " + String(p_return_type);
+	}
+	return signature;
+}
+
 void LunariGodotApi::_generate_class(const StringName &p_class) {
 	ClassInfo info;
 	info.name = p_class;
@@ -107,7 +183,9 @@ void LunariGodotApi::_generate_class(const StringName &p_class) {
 			continue;
 		}
 		info.properties[property.name] = property;
-		info.property_types[property.name] = _type_from_property(property);
+		info.property_types[property.name] = type_from_property(property);
+		info.property_setters[property.name] = ClassDB::get_property_setter(p_class, property.name);
+		info.property_getters[property.name] = ClassDB::get_property_getter(p_class, property.name);
 	}
 
 	List<MethodInfo> methods;
@@ -115,10 +193,13 @@ void LunariGodotApi::_generate_class(const StringName &p_class) {
 	for (const MethodInfo &method_info : methods) {
 		Method method;
 		method.info = method_info;
-		method.return_type = _type_from_property(method_info.return_val, true);
+		method.return_type = type_from_property(method_info.return_val, true);
 		for (const PropertyInfo &argument : method_info.arguments) {
-			method.argument_types.push_back(_type_from_property(argument));
+			method.argument_types.push_back(type_from_property(argument));
 		}
+		method.default_arguments = method_info.default_arguments;
+		method.flags = method_info.flags;
+		method.bind = ClassDB::get_method(p_class, method_info.name);
 		info.methods[method_info.name] = method;
 	}
 
@@ -140,6 +221,20 @@ void LunariGodotApi::_generate_class(const StringName &p_class) {
 		info.constant_enums[constant_name] = ClassDB::get_integer_constant_enum(p_class, constant_name);
 	}
 
+	List<StringName> enums;
+	ClassDB::get_enum_list(p_class, &enums, true);
+	for (const StringName &enum_name : enums) {
+		EnumInfo enum_info;
+		enum_info.name = enum_name;
+		enum_info.is_bitfield = ClassDB::is_enum_bitfield(p_class, enum_name, true);
+		List<StringName> enum_constants;
+		ClassDB::get_enum_constants(p_class, enum_name, &enum_constants, true);
+		for (const StringName &enum_constant : enum_constants) {
+			enum_info.constants.push_back(enum_constant);
+		}
+		info.enums[enum_name] = enum_info;
+	}
+
 	classes[p_class] = info;
 }
 
@@ -154,6 +249,7 @@ void LunariGodotApi::generate() {
 	for (uint32_t i = 0; i < class_names.size(); i++) {
 		_generate_class(class_names[i]);
 	}
+	write_snapshot();
 }
 
 void LunariGodotApi::clear() {
@@ -182,7 +278,11 @@ StringName LunariGodotApi::get_parent_class(const StringName &p_class) {
 
 bool LunariGodotApi::get_property_info(const StringName &p_class, const StringName &p_property, PropertyInfo *r_info) {
 	generate();
-	HashMap<StringName, ClassInfo>::Iterator E = classes.find(p_class);
+	StringName owner;
+	if (!_find_class_member_owner(p_class, p_property, _has_property_member, &owner)) {
+		return false;
+	}
+	HashMap<StringName, ClassInfo>::Iterator E = classes.find(owner);
 	if (!E) {
 		return false;
 	}
@@ -198,7 +298,11 @@ bool LunariGodotApi::get_property_info(const StringName &p_class, const StringNa
 
 bool LunariGodotApi::get_property_type(const StringName &p_class, const StringName &p_property, StringName *r_type) {
 	generate();
-	HashMap<StringName, ClassInfo>::Iterator E = classes.find(p_class);
+	StringName owner;
+	if (!_find_class_member_owner(p_class, p_property, _has_property_member, &owner)) {
+		return false;
+	}
+	HashMap<StringName, ClassInfo>::Iterator E = classes.find(owner);
 	if (!E) {
 		return false;
 	}
@@ -212,9 +316,53 @@ bool LunariGodotApi::get_property_type(const StringName &p_class, const StringNa
 	return true;
 }
 
+bool LunariGodotApi::get_property_setter(const StringName &p_class, const StringName &p_property, StringName *r_setter) {
+	generate();
+	StringName owner;
+	if (!_find_class_member_owner(p_class, p_property, _has_property_member, &owner)) {
+		return false;
+	}
+	HashMap<StringName, ClassInfo>::Iterator E = classes.find(owner);
+	if (!E) {
+		return false;
+	}
+	HashMap<StringName, StringName>::Iterator P = E->value.property_setters.find(p_property);
+	if (!P) {
+		return false;
+	}
+	if (r_setter) {
+		*r_setter = P->value;
+	}
+	return P->value != StringName();
+}
+
+bool LunariGodotApi::get_property_getter(const StringName &p_class, const StringName &p_property, StringName *r_getter) {
+	generate();
+	StringName owner;
+	if (!_find_class_member_owner(p_class, p_property, _has_property_member, &owner)) {
+		return false;
+	}
+	HashMap<StringName, ClassInfo>::Iterator E = classes.find(owner);
+	if (!E) {
+		return false;
+	}
+	HashMap<StringName, StringName>::Iterator P = E->value.property_getters.find(p_property);
+	if (!P) {
+		return false;
+	}
+	if (r_getter) {
+		*r_getter = P->value;
+	}
+	return P->value != StringName();
+}
+
 bool LunariGodotApi::get_method_info(const StringName &p_class, const StringName &p_method, Method *r_method) {
 	generate();
-	HashMap<StringName, ClassInfo>::Iterator E = classes.find(p_class);
+	StringName owner;
+	if (!_find_class_member_owner(p_class, p_method, _has_method_member, &owner)) {
+		return false;
+	}
+	HashMap<StringName, ClassInfo>::Iterator E = classes.find(owner);
 	if (!E) {
 		return false;
 	}
@@ -239,9 +387,21 @@ bool LunariGodotApi::get_method_return_type(const StringName &p_class, const Str
 	return true;
 }
 
+MethodBind *LunariGodotApi::get_method_bind(const StringName &p_class, const StringName &p_method) {
+	Method method;
+	if (!get_method_info(p_class, p_method, &method)) {
+		return nullptr;
+	}
+	return method.bind;
+}
+
 bool LunariGodotApi::get_signal_info(const StringName &p_class, const StringName &p_signal, MethodInfo *r_signal) {
 	generate();
-	HashMap<StringName, ClassInfo>::Iterator E = classes.find(p_class);
+	StringName owner;
+	if (!_find_class_member_owner(p_class, p_signal, _has_signal_member, &owner)) {
+		return false;
+	}
+	HashMap<StringName, ClassInfo>::Iterator E = classes.find(owner);
 	if (!E) {
 		return false;
 	}
@@ -257,7 +417,11 @@ bool LunariGodotApi::get_signal_info(const StringName &p_class, const StringName
 
 bool LunariGodotApi::get_constant(const StringName &p_class, const StringName &p_constant, int64_t *r_value, StringName *r_enum) {
 	generate();
-	HashMap<StringName, ClassInfo>::Iterator E = classes.find(p_class);
+	StringName owner;
+	if (!_find_class_member_owner(p_class, p_constant, _has_constant_member, &owner)) {
+		return false;
+	}
+	HashMap<StringName, ClassInfo>::Iterator E = classes.find(owner);
 	if (!E) {
 		return false;
 	}
@@ -275,6 +439,246 @@ bool LunariGodotApi::get_constant(const StringName &p_class, const StringName &p
 	return true;
 }
 
+bool LunariGodotApi::get_enum_info(const StringName &p_class, const StringName &p_enum, EnumInfo *r_enum) {
+	generate();
+	StringName current = p_class;
+	while (current != StringName()) {
+		HashMap<StringName, ClassInfo>::Iterator E = classes.find(current);
+		if (!E) {
+			return false;
+		}
+		HashMap<StringName, EnumInfo>::Iterator Enum = E->value.enums.find(p_enum);
+		if (Enum) {
+			if (r_enum) {
+				*r_enum = Enum->value;
+			}
+			return true;
+		}
+		current = E->value.base;
+	}
+	return false;
+}
+
+String LunariGodotApi::get_method_signature(const StringName &p_class, const StringName &p_method) {
+	Method method;
+	if (!get_method_info(p_class, p_method, &method)) {
+		return String();
+	}
+	return _lunari_method_signature_from_info(method.info, method.return_type, method.default_arguments);
+}
+
+String LunariGodotApi::get_signal_signature(const StringName &p_class, const StringName &p_signal) {
+	MethodInfo signal;
+	if (!get_signal_info(p_class, p_signal, &signal)) {
+		return String();
+	}
+	return _lunari_method_signature_from_info(signal, "Signal", Vector<Variant>());
+}
+
+String LunariGodotApi::get_property_signature(const StringName &p_class, const StringName &p_property) {
+	PropertyInfo property;
+	if (!get_property_info(p_class, p_property, &property)) {
+		return String();
+	}
+	String signature = String(p_property) + ": " + String(type_from_property(property));
+	StringName setter;
+	StringName getter;
+	const bool has_setter = get_property_setter(p_class, p_property, &setter);
+	const bool has_getter = get_property_getter(p_class, p_property, &getter);
+	if (property.hint != PROPERTY_HINT_NONE || !property.hint_string.is_empty()) {
+		signature += " [" + itos(property.hint) + ": " + property.hint_string + "]";
+	}
+	if (has_setter || has_getter) {
+		signature += " {";
+		if (has_getter) {
+			signature += " get: " + String(getter);
+		}
+		if (has_setter) {
+			if (has_getter) {
+				signature += ",";
+			}
+			signature += " set: " + String(setter);
+		}
+		signature += " }";
+	}
+	return signature;
+}
+
+String LunariGodotApi::get_snapshot_path() {
+	return "user://lunari/godot_api_snapshot.json";
+}
+
+Error LunariGodotApi::write_snapshot(const String &p_path) {
+	generate();
+	String path = p_path.is_empty() ? get_snapshot_path() : p_path;
+	Error dir_error = DirAccess::make_dir_recursive_absolute(path.get_base_dir());
+	ERR_FAIL_COND_V_MSG(dir_error != OK, dir_error, "Could not create Lunari API snapshot directory: " + path.get_base_dir());
+
+	Dictionary root;
+	root["format"] = "lunari-godot-api";
+	root["version"] = 1;
+	root["class_count"] = classes.size();
+
+	Array class_array;
+	Vector<StringName> class_names;
+	get_class_names(&class_names);
+	class_names.sort();
+	for (const StringName &class_name : class_names) {
+		HashMap<StringName, ClassInfo>::Iterator E = classes.find(class_name);
+		if (!E) {
+			continue;
+		}
+		const ClassInfo &class_info = E->value;
+		Dictionary class_dict;
+		class_dict["name"] = String(class_info.name);
+		class_dict["base"] = String(class_info.base);
+
+		Array property_array;
+		Vector<StringName> property_names;
+		for (const KeyValue<StringName, PropertyInfo> &property : class_info.properties) {
+			property_names.push_back(property.key);
+		}
+		property_names.sort();
+		for (const StringName &property_name : property_names) {
+			HashMap<StringName, PropertyInfo>::ConstIterator Property = class_info.properties.find(property_name);
+			if (!Property) {
+				continue;
+			}
+			Dictionary property_dict;
+			property_dict["name"] = String(property_name);
+			property_dict["type"] = String(type_from_property(Property->value));
+			property_dict["class_name"] = String(Property->value.class_name);
+			property_dict["hint"] = int(Property->value.hint);
+			property_dict["hint_string"] = Property->value.hint_string;
+			property_dict["usage"] = int(Property->value.usage);
+			HashMap<StringName, StringName>::ConstIterator Setter = class_info.property_setters.find(property_name);
+			HashMap<StringName, StringName>::ConstIterator Getter = class_info.property_getters.find(property_name);
+			property_dict["setter"] = Setter ? String(Setter->value) : String();
+			property_dict["getter"] = Getter ? String(Getter->value) : String();
+			HashMap<StringName, Variant>::ConstIterator Default = class_info.property_defaults.find(property_name);
+			const bool has_default = class_info.properties_with_defaults.has(property_name) && Default;
+			property_dict["default_value_valid"] = has_default;
+			property_dict["default_value"] = has_default ? _lunari_variant_default_to_source(Default->value) : String();
+			property_array.push_back(property_dict);
+		}
+		class_dict["properties"] = property_array;
+
+		Array method_array;
+		Vector<StringName> method_names;
+		for (const KeyValue<StringName, Method> &method : class_info.methods) {
+			method_names.push_back(method.key);
+		}
+		method_names.sort();
+		for (const StringName &method_name : method_names) {
+			HashMap<StringName, Method>::ConstIterator MethodEntry = class_info.methods.find(method_name);
+			if (!MethodEntry) {
+				continue;
+			}
+			const Method &method = MethodEntry->value;
+			Dictionary method_dict;
+			method_dict["name"] = String(method_name);
+			method_dict["return_type"] = String(method.return_type);
+			method_dict["signature"] = _lunari_method_signature_from_info(method.info, method.return_type, method.default_arguments);
+			method_dict["flags"] = int(method.flags);
+			Array arguments;
+			for (int i = 0; i < method.info.arguments.size(); i++) {
+				const PropertyInfo &argument = method.info.arguments[i];
+				Dictionary argument_dict;
+				argument_dict["name"] = String(argument.name);
+				argument_dict["type"] = String(type_from_property(argument));
+				argument_dict["class_name"] = String(argument.class_name);
+				arguments.push_back(argument_dict);
+			}
+			method_dict["arguments"] = arguments;
+			Array defaults;
+			for (const Variant &default_argument : method.default_arguments) {
+				defaults.push_back(_lunari_variant_default_to_source(default_argument));
+			}
+			method_dict["default_arguments"] = defaults;
+			method_array.push_back(method_dict);
+		}
+		class_dict["methods"] = method_array;
+
+		Array signal_array;
+		Vector<StringName> signal_names;
+		for (const KeyValue<StringName, MethodInfo> &signal : class_info.signals) {
+			signal_names.push_back(signal.key);
+		}
+		signal_names.sort();
+		for (const StringName &signal_name : signal_names) {
+			HashMap<StringName, MethodInfo>::ConstIterator SignalEntry = class_info.signals.find(signal_name);
+			if (!SignalEntry) {
+				continue;
+			}
+			Dictionary signal_dict;
+			signal_dict["name"] = String(signal_name);
+			signal_dict["signature"] = _lunari_method_signature_from_info(SignalEntry->value, "Signal", Vector<Variant>());
+			Array arguments;
+			for (const PropertyInfo &argument : SignalEntry->value.arguments) {
+				Dictionary argument_dict;
+				argument_dict["name"] = String(argument.name);
+				argument_dict["type"] = String(type_from_property(argument));
+				argument_dict["class_name"] = String(argument.class_name);
+				arguments.push_back(argument_dict);
+			}
+			signal_dict["arguments"] = arguments;
+			signal_array.push_back(signal_dict);
+		}
+		class_dict["signals"] = signal_array;
+
+		Array constant_array;
+		Vector<StringName> constant_names;
+		for (const KeyValue<StringName, int64_t> &constant : class_info.constants) {
+			constant_names.push_back(constant.key);
+		}
+		constant_names.sort();
+		for (const StringName &constant_name : constant_names) {
+			HashMap<StringName, int64_t>::ConstIterator Constant = class_info.constants.find(constant_name);
+			if (!Constant) {
+				continue;
+			}
+			Dictionary constant_dict;
+			constant_dict["name"] = String(constant_name);
+			constant_dict["value"] = Constant->value;
+			HashMap<StringName, StringName>::ConstIterator Enum = class_info.constant_enums.find(constant_name);
+			constant_dict["enum"] = Enum ? String(Enum->value) : String();
+			constant_array.push_back(constant_dict);
+		}
+		class_dict["constants"] = constant_array;
+
+		Array enum_array;
+		Vector<StringName> enum_names;
+		for (const KeyValue<StringName, EnumInfo> &enum_info : class_info.enums) {
+			enum_names.push_back(enum_info.key);
+		}
+		enum_names.sort();
+		for (const StringName &enum_name : enum_names) {
+			HashMap<StringName, EnumInfo>::ConstIterator EnumEntry = class_info.enums.find(enum_name);
+			if (!EnumEntry) {
+				continue;
+			}
+			Dictionary enum_dict;
+			enum_dict["name"] = String(enum_name);
+			enum_dict["bitfield"] = EnumEntry->value.is_bitfield;
+			Array enum_constants;
+			for (const StringName &constant : EnumEntry->value.constants) {
+				enum_constants.push_back(String(constant));
+			}
+			enum_dict["constants"] = enum_constants;
+			enum_array.push_back(enum_dict);
+		}
+		class_dict["enums"] = enum_array;
+
+		class_array.push_back(class_dict);
+	}
+	root["classes"] = class_array;
+
+	Ref<FileAccess> file = FileAccess::open(path, FileAccess::WRITE);
+	ERR_FAIL_COND_V_MSG(file.is_null(), ERR_CANT_CREATE, "Could not write Lunari API snapshot: " + path);
+	file->store_string(JSON::stringify(root, "\t", true, false));
+	return OK;
+}
+
 void LunariGodotApi::get_class_names(Vector<StringName> *r_classes) {
 	ERR_FAIL_NULL(r_classes);
 	generate();
@@ -286,29 +690,89 @@ void LunariGodotApi::get_class_names(Vector<StringName> *r_classes) {
 void LunariGodotApi::get_property_names(const StringName &p_class, Vector<StringName> *r_properties) {
 	ERR_FAIL_NULL(r_properties);
 	generate();
-	HashMap<StringName, ClassInfo>::Iterator E = classes.find(p_class);
-	ERR_FAIL_COND(!E);
-	for (const KeyValue<StringName, PropertyInfo> &property : E->value.properties) {
-		r_properties->push_back(property.key);
+	HashSet<StringName> seen;
+	StringName current = p_class;
+	while (current != StringName()) {
+		HashMap<StringName, ClassInfo>::Iterator E = classes.find(current);
+		ERR_FAIL_COND(!E);
+		for (const KeyValue<StringName, PropertyInfo> &property : E->value.properties) {
+			if (!seen.has(property.key)) {
+				seen.insert(property.key);
+				r_properties->push_back(property.key);
+			}
+		}
+		current = E->value.base;
 	}
 }
 
 void LunariGodotApi::get_method_names(const StringName &p_class, Vector<StringName> *r_methods) {
 	ERR_FAIL_NULL(r_methods);
 	generate();
-	HashMap<StringName, ClassInfo>::Iterator E = classes.find(p_class);
-	ERR_FAIL_COND(!E);
-	for (const KeyValue<StringName, Method> &method : E->value.methods) {
-		r_methods->push_back(method.key);
+	HashSet<StringName> seen;
+	StringName current = p_class;
+	while (current != StringName()) {
+		HashMap<StringName, ClassInfo>::Iterator E = classes.find(current);
+		ERR_FAIL_COND(!E);
+		for (const KeyValue<StringName, Method> &method : E->value.methods) {
+			if (!seen.has(method.key)) {
+				seen.insert(method.key);
+				r_methods->push_back(method.key);
+			}
+		}
+		current = E->value.base;
 	}
 }
 
 void LunariGodotApi::get_signal_names(const StringName &p_class, Vector<StringName> *r_signals) {
 	ERR_FAIL_NULL(r_signals);
 	generate();
-	HashMap<StringName, ClassInfo>::Iterator E = classes.find(p_class);
-	ERR_FAIL_COND(!E);
-	for (const KeyValue<StringName, MethodInfo> &signal : E->value.signals) {
-		r_signals->push_back(signal.key);
+	HashSet<StringName> seen;
+	StringName current = p_class;
+	while (current != StringName()) {
+		HashMap<StringName, ClassInfo>::Iterator E = classes.find(current);
+		ERR_FAIL_COND(!E);
+		for (const KeyValue<StringName, MethodInfo> &signal : E->value.signals) {
+			if (!seen.has(signal.key)) {
+				seen.insert(signal.key);
+				r_signals->push_back(signal.key);
+			}
+		}
+		current = E->value.base;
+	}
+}
+
+void LunariGodotApi::get_constant_names(const StringName &p_class, Vector<StringName> *r_constants) {
+	ERR_FAIL_NULL(r_constants);
+	generate();
+	HashSet<StringName> seen;
+	StringName current = p_class;
+	while (current != StringName()) {
+		HashMap<StringName, ClassInfo>::Iterator E = classes.find(current);
+		ERR_FAIL_COND(!E);
+		for (const KeyValue<StringName, int64_t> &constant : E->value.constants) {
+			if (!seen.has(constant.key)) {
+				seen.insert(constant.key);
+				r_constants->push_back(constant.key);
+			}
+		}
+		current = E->value.base;
+	}
+}
+
+void LunariGodotApi::get_enum_names(const StringName &p_class, Vector<StringName> *r_enums) {
+	ERR_FAIL_NULL(r_enums);
+	generate();
+	HashSet<StringName> seen;
+	StringName current = p_class;
+	while (current != StringName()) {
+		HashMap<StringName, ClassInfo>::Iterator E = classes.find(current);
+		ERR_FAIL_COND(!E);
+		for (const KeyValue<StringName, EnumInfo> &enum_info : E->value.enums) {
+			if (!seen.has(enum_info.key)) {
+				seen.insert(enum_info.key);
+				r_enums->push_back(enum_info.key);
+			}
+		}
+		current = E->value.base;
 	}
 }

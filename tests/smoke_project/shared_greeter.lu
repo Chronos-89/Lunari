@@ -1,0 +1,15 @@
+require "godot"
+
+type SharedName = String
+
+class SharedGreeter
+  @name: SharedName
+
+  def initialize(name: SharedName): void
+    @name = name.capitalize
+  end
+
+  def salute: String
+    return "Shared " + @name
+  end
+end

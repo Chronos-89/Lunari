@@ -1,0 +1,5 @@
+config_version=5
+
+[application]
+config/name="Lunari Negative Tests"
+run/main_scene="res://missing_require.tscn"
