@@ -12,6 +12,7 @@
 #include "lunari_parser.h"
 #include "lunari_rpc_callable.h"
 #include "lunari_tooling.h"
+#include "lunari_tokenizer_buffer.h"
 #include "lunari_utility_functions.h"
 #include "lunari_vm.h"
 #include "lunari_vim.h"
@@ -8970,6 +8971,7 @@ void LunariScript::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("rename_symbol", "old_name", "new_name", "code"), &LunariScript::rename_symbol, DEFVAL(String()));
 	ClassDB::bind_method(D_METHOD("go_to_definition", "symbol", "code"), &LunariScript::go_to_definition, DEFVAL(String()));
 	ClassDB::bind_method(D_METHOD("hover_symbol", "symbol", "receiver_type", "code"), &LunariScript::hover_symbol, DEFVAL(StringName()), DEFVAL(String()));
+	ClassDB::bind_method(D_METHOD("debug_tokenizer_roundtrip", "code", "compressed"), &LunariScript::debug_tokenizer_roundtrip, DEFVAL(false));
 }
 
 LunariScript::LunariScript() {
@@ -10842,6 +10844,30 @@ String LunariScript::hover_symbol(const StringName &p_symbol, const StringName &
 		}
 	}
 	return LunariTooling::hover_symbol(p_code.is_empty() ? source : p_code, p_symbol);
+}
+
+bool LunariScript::debug_tokenizer_roundtrip(const String &p_code, bool p_compressed) const {
+	LunariTokenizer source_tokenizer;
+	source_tokenizer.set_source_code(p_code);
+	Vector<LunariTokenizer::Token> expected = source_tokenizer.scan_all();
+
+	LunariTokenizerBuffer writer;
+	Vector<uint8_t> buffer = writer.parse_code_string(p_code, p_compressed ? LunariTokenizerBuffer::COMPRESS_ZSTD : LunariTokenizerBuffer::COMPRESS_NONE);
+	ERR_FAIL_COND_V(buffer.is_empty(), false);
+
+	LunariTokenizerBuffer reader;
+	ERR_FAIL_COND_V(reader.set_code_buffer(buffer) != OK, false);
+	const Vector<LunariTokenizer::Token> &actual = reader.get_tokens();
+	ERR_FAIL_COND_V(expected.size() != actual.size(), false);
+	for (int i = 0; i < expected.size(); i++) {
+		if (expected[i].type != actual[i].type ||
+				expected[i].line != actual[i].line ||
+				expected[i].column != actual[i].column ||
+				expected[i].source != actual[i].source) {
+			return false;
+		}
+	}
+	return true;
 }
 
 static bool _lunari_try_fast_int_term(const String &p_term, HashMap<StringName, Variant> *p_locals, int64_t *r_value) {

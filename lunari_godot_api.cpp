@@ -214,7 +214,7 @@ void LunariGodotApi::_generate_class(const StringName &p_class) {
 	info.base = ClassDB::get_parent_class(p_class);
 
 	List<PropertyInfo> properties;
-	ClassDB::get_property_list(p_class, &properties);
+	ClassDB::get_property_list(p_class, &properties, true);
 	for (const PropertyInfo &property : properties) {
 		if (property.name.is_empty() || property.usage & PROPERTY_USAGE_CATEGORY || property.usage & PROPERTY_USAGE_GROUP || property.usage & PROPERTY_USAGE_SUBGROUP) {
 			continue;
@@ -231,7 +231,7 @@ void LunariGodotApi::_generate_class(const StringName &p_class) {
 	}
 
 	List<MethodInfo> methods;
-	ClassDB::get_method_list(p_class, &methods, false, true);
+	ClassDB::get_method_list(p_class, &methods, true, true);
 	for (const MethodInfo &method_info : methods) {
 		Method method;
 		method.info = method_info;
@@ -246,13 +246,13 @@ void LunariGodotApi::_generate_class(const StringName &p_class) {
 	}
 
 	List<MethodInfo> signals;
-	ClassDB::get_signal_list(p_class, &signals);
+	ClassDB::get_signal_list(p_class, &signals, true);
 	for (const MethodInfo &signal_info : signals) {
 		info.signals[signal_info.name] = signal_info;
 	}
 
 	List<String> constants;
-	ClassDB::get_integer_constant_list(p_class, &constants);
+	ClassDB::get_integer_constant_list(p_class, &constants, true);
 	for (const String &constant_name : constants) {
 		bool valid = false;
 		int64_t value = ClassDB::get_integer_constant(p_class, constant_name, &valid);
@@ -575,6 +575,22 @@ Error LunariGodotApi::write_snapshot(const String &p_path) {
 		class_dict["name"] = String(class_info.name);
 		class_dict["base"] = String(class_info.base);
 
+		Vector<StringName> inherited_properties;
+		Vector<StringName> inherited_methods;
+		Vector<StringName> inherited_signals;
+		Vector<StringName> inherited_constants;
+		Vector<StringName> inherited_enums;
+		get_property_names(class_name, &inherited_properties);
+		get_method_names(class_name, &inherited_methods);
+		get_signal_names(class_name, &inherited_signals);
+		get_constant_names(class_name, &inherited_constants);
+		get_enum_names(class_name, &inherited_enums);
+		class_dict["property_count_including_inherited"] = inherited_properties.size();
+		class_dict["method_count_including_inherited"] = inherited_methods.size();
+		class_dict["signal_count_including_inherited"] = inherited_signals.size();
+		class_dict["constant_count_including_inherited"] = inherited_constants.size();
+		class_dict["enum_count_including_inherited"] = inherited_enums.size();
+
 		Array property_array;
 		Vector<StringName> property_names;
 		for (const KeyValue<StringName, PropertyInfo> &property : class_info.properties) {
@@ -590,6 +606,7 @@ Error LunariGodotApi::write_snapshot(const String &p_path) {
 			property_dict["name"] = String(property_name);
 			property_dict["type"] = String(type_from_property(Property->value));
 			property_dict["class_name"] = String(Property->value.class_name);
+			property_dict["owner"] = String(class_name);
 			property_dict["hint"] = int(Property->value.hint);
 			property_dict["hint_string"] = Property->value.hint_string;
 			property_dict["usage"] = int(Property->value.usage);
@@ -619,6 +636,7 @@ Error LunariGodotApi::write_snapshot(const String &p_path) {
 			const Method &method = MethodEntry->value;
 			Dictionary method_dict;
 			method_dict["name"] = String(method_name);
+			method_dict["owner"] = String(class_name);
 			method_dict["return_type"] = String(method.return_type);
 			method_dict["signature"] = _lunari_method_signature_from_info(method.info, method.return_type, method.default_arguments);
 			method_dict["flags"] = int(method.flags);
@@ -654,6 +672,7 @@ Error LunariGodotApi::write_snapshot(const String &p_path) {
 			}
 			Dictionary signal_dict;
 			signal_dict["name"] = String(signal_name);
+			signal_dict["owner"] = String(class_name);
 			signal_dict["signature"] = _lunari_method_signature_from_info(SignalEntry->value, "Signal", Vector<Variant>());
 			Array arguments;
 			for (const PropertyInfo &argument : SignalEntry->value.arguments) {
@@ -681,6 +700,7 @@ Error LunariGodotApi::write_snapshot(const String &p_path) {
 			}
 			Dictionary constant_dict;
 			constant_dict["name"] = String(constant_name);
+			constant_dict["owner"] = String(class_name);
 			constant_dict["value"] = Constant->value;
 			HashMap<StringName, StringName>::ConstIterator Enum = class_info.constant_enums.find(constant_name);
 			constant_dict["enum"] = Enum ? String(Enum->value) : String();
@@ -701,6 +721,7 @@ Error LunariGodotApi::write_snapshot(const String &p_path) {
 			}
 			Dictionary enum_dict;
 			enum_dict["name"] = String(enum_name);
+			enum_dict["owner"] = String(class_name);
 			enum_dict["bitfield"] = EnumEntry->value.is_bitfield;
 			Array enum_constants;
 			for (const StringName &constant : EnumEntry->value.constants) {

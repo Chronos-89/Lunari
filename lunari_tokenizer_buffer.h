@@ -14,6 +14,7 @@ public:
 
 	enum CompressMode {
 		COMPRESS_NONE,
+		COMPRESS_ZSTD,
 	};
 
 private:

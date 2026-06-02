@@ -388,6 +388,7 @@ public:
 	Dictionary rename_symbol(const StringName &p_old_name, const StringName &p_new_name, const String &p_code = String()) const;
 	Dictionary go_to_definition(const StringName &p_symbol, const String &p_code = String()) const;
 	String hover_symbol(const StringName &p_symbol, const StringName &p_receiver_type = StringName(), const String &p_code = String()) const;
+	bool debug_tokenizer_roundtrip(const String &p_code, bool p_compressed = false) const;
 	Variant construct_user_class(const StringName &p_class_name, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr);
 	Variant call_user_method(const Ref<LunariObject> &p_object, const StringName &p_method, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr, bool p_allow_private = false);
 	void initialize_instance(LunariScriptInstance *p_instance);

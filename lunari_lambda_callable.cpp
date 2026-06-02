@@ -62,7 +62,25 @@ void LunariLambdaCallable::call(const Variant **p_arguments, int p_argcount, Var
 	r_call_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
 	ERR_FAIL_COND_MSG(script.is_null(), "Lunari callable has no script context.");
 	if (!proc.has("__lunari_proc")) {
-		ERR_PRINT("Lunari named lambda bytecode execution is not implemented yet.");
+		Vector<Variant> args;
+		for (int i = 0; i < p_argcount; i++) {
+			args.push_back(*p_arguments[i]);
+		}
+
+		LunariScriptInstance *instance = nullptr;
+		Object *owner = ObjectDB::get_instance(owner_id);
+		if (owner && owner->get_script_instance()) {
+			instance = static_cast<LunariScriptInstance *>(owner->get_script_instance());
+		}
+
+		HashMap<StringName, Variant> locals;
+		Variant return_value;
+		const StringName owner_class = script->get_global_name();
+		if (script->_execute_bytecode_method(owner_class, lambda_name, instance, &locals, Ref<LunariObject>(), &return_value, &args) ||
+				script->_execute_method_body(lambda_name, instance, &locals, Ref<LunariObject>(), &return_value, owner_class, &args)) {
+			r_return_value = return_value;
+			r_call_error.error = Callable::CallError::CALL_OK;
+		}
 		return;
 	}
 

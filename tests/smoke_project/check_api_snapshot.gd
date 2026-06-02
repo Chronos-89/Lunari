@@ -36,6 +36,10 @@ func _initialize() -> void:
 		push_error("Lunari API snapshot has wrong Label.text type: " + str(text_property.get("type", "")))
 		quit(1)
 		return
+	if text_property.get("owner", "") != "Label":
+		push_error("Lunari API snapshot is missing Label.text owner metadata")
+		quit(1)
+		return
 
 	if not text_property.has("setter") or not text_property.has("getter"):
 		push_error("Lunari API snapshot is missing Label.text setter/getter metadata")
@@ -59,6 +63,17 @@ func _initialize() -> void:
 	var add_child_method: Dictionary = _find_named(node_class.get("methods", []), "add_child")
 	if add_child_method.is_empty() or not add_child_method.has("default_arguments"):
 		push_error("Lunari API snapshot is missing Node.add_child call metadata")
+		quit(1)
+		return
+	if add_child_method.get("owner", "") != "Node":
+		push_error("Lunari API snapshot is missing Node.add_child owner metadata")
+		quit(1)
+		return
+
+	var label_method_count := int(label_class.get("method_count_including_inherited", 0))
+	var label_own_methods := int(label_class.get("methods", []).size())
+	if label_method_count <= label_own_methods:
+		push_error("Lunari API snapshot is missing inherited method count metadata for Label")
 		quit(1)
 		return
 

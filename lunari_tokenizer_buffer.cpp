@@ -4,7 +4,10 @@
 
 #include "lunari_tokenizer_buffer.h"
 
+#include "core/io/compression.h"
 #include "core/io/marshalls.h"
+
+static const uint8_t LUNARI_TOKENIZER_BUFFER_MAGIC[4] = { 'L', 'U', 'T', 'K' };
 
 static void _append_u32(Vector<uint8_t> &r_buffer, uint32_t p_value) {
 	for (int i = 0; i < 4; i++) {
@@ -30,30 +33,54 @@ Error LunariTokenizerBuffer::set_code_buffer(const Vector<uint8_t> &p_buffer) {
 		return ERR_INVALID_DATA;
 	}
 
+	Vector<uint8_t> contents;
+	const Vector<uint8_t> *read_buffer = &p_buffer;
+	if (p_buffer.size() >= 12 &&
+			p_buffer[0] == LUNARI_TOKENIZER_BUFFER_MAGIC[0] &&
+			p_buffer[1] == LUNARI_TOKENIZER_BUFFER_MAGIC[1] &&
+			p_buffer[2] == LUNARI_TOKENIZER_BUFFER_MAGIC[2] &&
+			p_buffer[3] == LUNARI_TOKENIZER_BUFFER_MAGIC[3]) {
+		const uint8_t *buf = p_buffer.ptr();
+		const uint32_t version = decode_uint32(&buf[4]);
+		if (version != TOKENIZER_VERSION) {
+			return ERR_FILE_UNRECOGNIZED;
+		}
+		const uint32_t decompressed_size = decode_uint32(&buf[8]);
+		if (decompressed_size == 0) {
+			contents = p_buffer.slice(12);
+		} else {
+			contents.resize(decompressed_size);
+			const int64_t result = Compression::decompress(contents.ptrw(), contents.size(), &buf[12], p_buffer.size() - 12, Compression::MODE_ZSTD);
+			ERR_FAIL_COND_V_MSG(result != decompressed_size, ERR_INVALID_DATA, "Error decompressing Lunari tokenizer buffer.");
+		}
+		read_buffer = &contents;
+		if (read_buffer->size() < 8) {
+			return ERR_INVALID_DATA;
+		}
+	}
+
 	int offset = 0;
-	const uint32_t version = _read_u32(p_buffer, offset);
+	const uint32_t version = _read_u32(*read_buffer, offset);
 	if (version != TOKENIZER_VERSION) {
 		return ERR_FILE_UNRECOGNIZED;
 	}
 
-	const uint32_t token_count = _read_u32(p_buffer, offset);
+	const uint32_t token_count = _read_u32(*read_buffer, offset);
 	for (uint32_t i = 0; i < token_count; i++) {
-		if (offset + 16 > p_buffer.size()) {
+		if (offset + 16 > read_buffer->size()) {
 			return ERR_INVALID_DATA;
 		}
 
 		LunariTokenizer::Token token;
-		token.type = (LunariTokenizer::Token::Type)_read_u32(p_buffer, offset);
-		token.line = (int)_read_u32(p_buffer, offset);
-		token.column = (int)_read_u32(p_buffer, offset);
-		const uint32_t source_len = _read_u32(p_buffer, offset);
-		if (offset + (int)source_len > p_buffer.size()) {
+		token.type = (LunariTokenizer::Token::Type)_read_u32(*read_buffer, offset);
+		token.line = (int)_read_u32(*read_buffer, offset);
+		token.column = (int)_read_u32(*read_buffer, offset);
+		const uint32_t source_len = _read_u32(*read_buffer, offset);
+		if (offset + (int)source_len > read_buffer->size()) {
 			return ERR_INVALID_DATA;
 		}
-		String source;
-		for (uint32_t j = 0; j < source_len; j++) {
-			source += char32_t(p_buffer[offset++]);
-		}
+		String source = source_len > 0 ? String::utf8(reinterpret_cast<const char *>(read_buffer->ptr() + offset), source_len) : String();
+		offset += source_len;
 		token.source = source;
 		token.literal = token.source;
 		tokens.push_back(token);
@@ -63,8 +90,6 @@ Error LunariTokenizerBuffer::set_code_buffer(const Vector<uint8_t> &p_buffer) {
 }
 
 Vector<uint8_t> LunariTokenizerBuffer::parse_code_string(const String &p_code, CompressMode p_compress_mode) {
-	ERR_FAIL_COND_V_MSG(p_compress_mode != COMPRESS_NONE, Vector<uint8_t>(), "Lunari tokenizer compression is not implemented yet.");
-
 	LunariTokenizer tokenizer;
 	tokenizer.set_source_code(p_code);
 	tokens = tokenizer.scan_all();
@@ -84,7 +109,31 @@ Vector<uint8_t> LunariTokenizerBuffer::parse_code_string(const String &p_code, C
 			buffer.push_back(source_utf8[i]);
 		}
 	}
-	return buffer;
+
+	switch (p_compress_mode) {
+		case COMPRESS_NONE:
+			return buffer;
+		case COMPRESS_ZSTD: {
+			Vector<uint8_t> compressed;
+			const int64_t max_size = Compression::get_max_compressed_buffer_size(buffer.size(), Compression::MODE_ZSTD);
+			compressed.resize(max_size);
+			const int64_t compressed_size = Compression::compress(compressed.ptrw(), buffer.ptr(), buffer.size(), Compression::MODE_ZSTD);
+			ERR_FAIL_COND_V_MSG(compressed_size < 0, Vector<uint8_t>(), "Error compressing Lunari tokenizer buffer.");
+			compressed.resize(compressed_size);
+
+			Vector<uint8_t> wrapped;
+			wrapped.resize(12);
+			wrapped.write[0] = LUNARI_TOKENIZER_BUFFER_MAGIC[0];
+			wrapped.write[1] = LUNARI_TOKENIZER_BUFFER_MAGIC[1];
+			wrapped.write[2] = LUNARI_TOKENIZER_BUFFER_MAGIC[2];
+			wrapped.write[3] = LUNARI_TOKENIZER_BUFFER_MAGIC[3];
+			encode_uint32(TOKENIZER_VERSION, &wrapped.write[4]);
+			encode_uint32(buffer.size(), &wrapped.write[8]);
+			wrapped.append_array(compressed);
+			return wrapped;
+		}
+	}
+	return Vector<uint8_t>();
 }
 
 LunariTokenizer::Token LunariTokenizerBuffer::scan() {
