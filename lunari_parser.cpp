@@ -230,7 +230,17 @@ Vector<LunariAST::Parameter> LunariParser::_parse_parameters_from_method_line(co
 		return parameters;
 	}
 	for (const String &part : _split_top_level(params, ',')) {
-		parameters.push_back(_parse_parameter(part, p_line_number));
+		String param = part.strip_edges();
+		if (param.begins_with("{") && param.ends_with("}")) {
+			String keyword_params = param.substr(1, param.length() - 2).strip_edges();
+			for (const String &keyword_part : _split_top_level(keyword_params, ',')) {
+				LunariAST::Parameter parameter = _parse_parameter(keyword_part, p_line_number);
+				parameter.is_keyword = true;
+				parameters.push_back(parameter);
+			}
+			continue;
+		}
+		parameters.push_back(_parse_parameter(param, p_line_number));
 	}
 	return parameters;
 }

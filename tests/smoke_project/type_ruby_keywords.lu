@@ -1,0 +1,26 @@
+require "godot"
+
+class KeywordProfile
+  @line: String = ""
+
+  def initialize({ name: String, title: String = "Adventurer", level: Integer, guild: String = "none", faction: String = "none", **tags: Hash<Symbol, String> }): void
+    @line = title + " " + name.capitalize + " L" + level.to_s + " " + guild + " " + faction + " extras=" + tags.size.to_s
+  end
+
+  def line: String
+    return @line
+  end
+end
+
+class TypeRubyKeywords < Node
+  @message: String = ""
+
+  def ready: void
+    profile: KeywordProfile = KeywordProfile.new(name: "luna", level: 7, guild: "Moon", faction: "Mages")
+    @message = profile.line
+  end
+
+  def result_message: String
+    return @message
+  end
+end

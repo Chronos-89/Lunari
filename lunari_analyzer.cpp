@@ -2285,7 +2285,20 @@ bool LunariAnalyzer::_parse_method(const String &p_line, int p_line_number, bool
 		}
 		String params = declaration.substr(paren + 1, close_paren - paren - 1).strip_edges();
 		if (!params.is_empty()) {
-			Vector<String> parts = _split_top_level(params, ',');
+			Vector<String> parts;
+			HashSet<int> keyword_part_indices;
+			for (const String &part : _split_top_level(params, ',')) {
+				String param = part.strip_edges();
+				if (param.begins_with("{") && param.ends_with("}")) {
+					String keyword_params = param.substr(1, param.length() - 2).strip_edges();
+					for (const String &keyword_part : _split_top_level(keyword_params, ',')) {
+						keyword_part_indices.insert(parts.size());
+						parts.push_back(keyword_part.strip_edges());
+					}
+					continue;
+				}
+				parts.push_back(param);
+			}
 			bool saw_rest = false;
 			bool saw_block = false;
 			for (const String &part : parts) {
@@ -2294,6 +2307,9 @@ bool LunariAnalyzer::_parse_method(const String &p_line, int p_line_number, bool
 				if (!_parse_parameter(part, p_line_number, parameter, &error)) {
 					_add_error(p_line_number, error);
 					return false;
+				}
+				if (keyword_part_indices.has(method.parameters.size())) {
+					parameter.is_keyword = true;
 				}
 				if (saw_block) {
 					_add_error(p_line_number, "block parameter must be the last parameter.");

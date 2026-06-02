@@ -18,6 +18,8 @@ class LunariScript;
 class LunariScriptInstance;
 class LunariObject;
 class LunariVM;
+class MethodBind;
+class Label;
 
 class LunariExpressionParser {
 	String source;
@@ -140,9 +142,18 @@ public:
 };
 
 class LunariScriptInstance : public ScriptInstance {
+	friend class LunariScript;
+
 	Object *owner = nullptr;
 	Ref<LunariScript> script;
 	HashMap<StringName, Variant> fields;
+	HashSet<ObjectID> owned_nodes;
+	HashMap<StringName, void *> cached_fast_plans;
+	StringName cached_fast_method;
+	void *cached_fast_plan = nullptr;
+	StringName cached_fast_target_field;
+	Object *cached_fast_target_object = nullptr;
+	Label *cached_fast_target_label = nullptr;
 
 public:
 	bool set(const StringName &p_name, const Variant &p_value) override;
@@ -164,6 +175,8 @@ public:
 	void set_field(const StringName &p_name, const Variant &p_value);
 	bool has_field(const StringName &p_name) const;
 	Array get_field_names() const;
+	void track_created_object(Object *p_object);
+	void release_tracked_object(Object *p_object);
 
 	LunariScriptInstance(const Ref<LunariScript> &p_script, Object *p_owner);
 	~LunariScriptInstance();
@@ -219,6 +232,46 @@ public:
 		bool is_module = false;
 	};
 
+	struct MethodSignatureInfo {
+		StringName owner_class;
+		StringName name;
+		Vector<LunariAST::Parameter> parameters;
+	};
+
+	struct FastBytecodeMethodPlan {
+		bool analyzed = false;
+		bool supported = false;
+		StringName parameter_name;
+		int op_count = 0;
+		LunariBytecode::Opcode first_opcode = LunariBytecode::OP_NOOP;
+		String first_a;
+		String first_b;
+		String first_c;
+		LunariBytecode::Opcode second_opcode = LunariBytecode::OP_NOOP;
+		String second_a;
+		String second_b;
+		String second_c;
+		StringName cached_property_class;
+		StringName cached_property_setter;
+		MethodBind *cached_property_setter_bind = nullptr;
+		bool cached_property_lookup = false;
+		bool cached_property_has_setter = false;
+		int first_expression_kind = 0;
+		int64_t first_mul = 1;
+		int64_t first_add = 0;
+		String first_string_prefix;
+		Vector<String> first_small_int_strings;
+		String first_field_name;
+		String first_property_name;
+		int second_expression_kind = 0;
+		int64_t second_mul = 1;
+		int64_t second_add = 0;
+		String second_string_prefix;
+		Vector<String> second_small_int_strings;
+		String second_field_name;
+		String second_property_name;
+	};
+
 private:
 	String source;
 	String runtime_source;
@@ -226,8 +279,12 @@ private:
 	StringName class_name;
 	Vector<FieldInfo> fields;
 	Vector<MethodInfo> methods;
+	HashSet<StringName> method_names;
 	Vector<MethodInfo> signals;
 	HashMap<StringName, UserClassInfo> user_classes;
+	HashMap<String, MethodSignatureInfo> method_signatures;
+	HashMap<String, FastBytecodeMethodPlan> fast_bytecode_method_plans;
+	HashMap<StringName, FastBytecodeMethodPlan> fast_instance_bytecode_method_plans;
 	HashMap<StringName, Variant> static_fields;
 	HashMap<StringName, StringName> type_aliases;
 	LunariBytecode bytecode;
@@ -245,12 +302,19 @@ private:
 	bool _run_initialize(LunariScriptInstance *p_instance);
 	bool _run_ready(LunariScriptInstance *p_instance);
 	bool _bind_method_arguments(const String &p_method_line, const Vector<Variant> *p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals);
+	bool _bind_method_parameters(const Vector<LunariAST::Parameter> &p_parameters, const Vector<Variant> *p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals);
 	bool _bind_bytecode_method_arguments(const StringName &p_owner_class, const StringName &p_method, const Vector<Variant> *p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals);
 	bool _execute_method_lines(const Vector<String> &p_body, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, Ref<LunariObject> p_self = Ref<LunariObject>(), Variant *r_return_value = nullptr);
 	bool _truthy(const Variant &p_value) const;
 	bool _execute_method_body(const String &p_method, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, Ref<LunariObject> p_self = Ref<LunariObject>(), Variant *r_return_value = nullptr, const StringName &p_class_name = StringName(), const Vector<Variant> *p_args = nullptr);
 	bool _execute_statement(const String &p_statement, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, Ref<LunariObject> p_self = Ref<LunariObject>(), bool *r_did_return = nullptr, Variant *r_return_value = nullptr);
 	Variant _eval_expression(const String &p_expression, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, bool *r_valid = nullptr);
+	FastBytecodeMethodPlan *_get_fast_bytecode_method_plan(const StringName &p_owner_class, const StringName &p_method);
+	FastBytecodeMethodPlan *_get_fast_instance_bytecode_method_plan(const StringName &p_method);
+	bool _execute_fast_instance_bytecode_planp(FastBytecodeMethodPlan *p_plan, LunariScriptInstance *p_instance, const Variant **p_args, int p_argcount, Variant *r_return_value = nullptr);
+	bool _execute_fast_instance_bytecode_methodp(const StringName &p_method, LunariScriptInstance *p_instance, const Variant **p_args, int p_argcount, Variant *r_return_value = nullptr);
+	bool _execute_fast_bytecode_methodp(const StringName &p_owner_class, const StringName &p_method, LunariScriptInstance *p_instance, const Variant **p_args, int p_argcount, Variant *r_return_value = nullptr);
+	bool _execute_fast_bytecode_method(const StringName &p_owner_class, const StringName &p_method, LunariScriptInstance *p_instance, Variant *r_return_value = nullptr, const Vector<Variant> *p_args = nullptr);
 	bool _execute_bytecode_method(const StringName &p_owner_class, const StringName &p_method, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, Ref<LunariObject> p_self = Ref<LunariObject>(), Variant *r_return_value = nullptr, const Vector<Variant> *p_args = nullptr);
 	String _find_static_field_key(const StringName &p_class_name, const StringName &p_field_name, bool p_inherit = true) const;
 	bool _find_instance_method_owner(const StringName &p_class_name, const StringName &p_method, StringName *r_owner_class = nullptr, StringName *r_method_name = nullptr) const;
@@ -322,6 +386,8 @@ public:
 	Array collect_outline(const String &p_code = String()) const;
 	Array find_references(const StringName &p_symbol, const String &p_code = String()) const;
 	Dictionary rename_symbol(const StringName &p_old_name, const StringName &p_new_name, const String &p_code = String()) const;
+	Dictionary go_to_definition(const StringName &p_symbol, const String &p_code = String()) const;
+	String hover_symbol(const StringName &p_symbol, const StringName &p_receiver_type = StringName(), const String &p_code = String()) const;
 	Variant construct_user_class(const StringName &p_class_name, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr);
 	Variant call_user_method(const Ref<LunariObject> &p_object, const StringName &p_method, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr, bool p_allow_private = false);
 	void initialize_instance(LunariScriptInstance *p_instance);

@@ -150,6 +150,43 @@ static String _lunari_variant_default_to_source(const Variant &p_value) {
 	return p_value.stringify();
 }
 
+static bool _lunari_property_type_default(const PropertyInfo &p_property, Variant *r_default) {
+	ERR_FAIL_NULL_V(r_default, false);
+	switch (p_property.type) {
+		case Variant::BOOL:
+			*r_default = false;
+			return true;
+		case Variant::INT:
+			*r_default = 0;
+			return true;
+		case Variant::FLOAT:
+			*r_default = 0.0;
+			return true;
+		case Variant::STRING:
+			*r_default = String();
+			return true;
+		case Variant::STRING_NAME:
+			*r_default = StringName();
+			return true;
+		case Variant::NODE_PATH:
+			*r_default = NodePath();
+			return true;
+		case Variant::ARRAY:
+			*r_default = Array();
+			return true;
+		case Variant::DICTIONARY:
+			*r_default = Dictionary();
+			return true;
+		case Variant::OBJECT:
+		case Variant::NIL:
+			*r_default = Variant();
+			return true;
+		default:
+			break;
+	}
+	return false;
+}
+
 static String _lunari_method_signature_from_info(const MethodInfo &p_info, const StringName &p_return_type, const Vector<Variant> &p_defaults) {
 	String signature = String(p_info.name) + "(";
 	const int required_count = MAX(0, p_info.arguments.size() - p_defaults.size());
@@ -186,6 +223,11 @@ void LunariGodotApi::_generate_class(const StringName &p_class) {
 		info.property_types[property.name] = type_from_property(property);
 		info.property_setters[property.name] = ClassDB::get_property_setter(p_class, property.name);
 		info.property_getters[property.name] = ClassDB::get_property_getter(p_class, property.name);
+		Variant default_value;
+		if (_lunari_property_type_default(property, &default_value)) {
+			info.properties_with_defaults.insert(property.name);
+			info.property_defaults[property.name] = default_value;
+		}
 	}
 
 	List<MethodInfo> methods;

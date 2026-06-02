@@ -199,3 +199,41 @@ Dictionary LunariTooling::rename_symbol(const String &p_code, const String &p_ol
 	result["changed"] = references.size();
 	return result;
 }
+
+Dictionary LunariTooling::go_to_definition(const String &p_code, const String &p_symbol) {
+	Dictionary result;
+	result["found"] = false;
+	if (p_symbol.is_empty()) {
+		return result;
+	}
+	const String plain_symbol = _lunari_tooling_plain_name(p_symbol);
+	const String instance_symbol = _lunari_tooling_instance_name(p_symbol);
+	Array outline = collect_outline(p_code);
+	for (int i = 0; i < outline.size(); i++) {
+		Dictionary item = outline[i];
+		const String name = item.get("name", "");
+		const String source_name = item.get("source_name", "");
+		if (name == p_symbol || source_name == p_symbol || name == plain_symbol || source_name == instance_symbol) {
+			item["found"] = true;
+			return item;
+		}
+	}
+	return result;
+}
+
+String LunariTooling::hover_symbol(const String &p_code, const String &p_symbol) {
+	Dictionary definition = go_to_definition(p_code, p_symbol);
+	if (!definition.get("found", false)) {
+		return String();
+	}
+	String hover = String(definition.get("kind", "symbol")) + " " + String(definition.get("source_name", definition.get("name", p_symbol)));
+	String type = definition.get("type", "");
+	if (!type.is_empty()) {
+		hover += ": " + type;
+	}
+	int line = int(definition.get("line", 0));
+	if (line > 0) {
+		hover += " (line " + itos(line) + ")";
+	}
+	return hover;
+}

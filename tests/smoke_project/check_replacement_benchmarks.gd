@@ -1,11 +1,15 @@
 extends SceneTree
 
-const ITERATIONS := 32
+const ITERATIONS := 4096
+const WARMUP_ITERATIONS := 256
+const LUNARI_MAX_USEC_PER_CALL := 1.0
 
 func _initialize() -> void:
 	call_deferred("_run")
 
 func _time_call(target: Object, method: StringName) -> Dictionary:
+	for i in WARMUP_ITERATIONS:
+		target.call(method, i)
 	var start := Time.get_ticks_usec()
 	var result
 	for i in ITERATIONS:
@@ -14,6 +18,7 @@ func _time_call(target: Object, method: StringName) -> Dictionary:
 	return {
 		"result": result,
 		"usec": elapsed,
+		"usec_per_call": float(elapsed) / float(ITERATIONS),
 	}
 
 func _run() -> void:
@@ -49,7 +54,11 @@ func _run() -> void:
 			push_error("benchmark result mismatch for %s: Lunari=%s GDScript=%s" % [method, str(lunari_result.result), str(gd_result.result)])
 			quit(1)
 			return
-		report.append("%s Lunari=%dus GDScript=%dus" % [method, lunari_result.usec, gd_result.usec])
+		if lunari_result.usec_per_call > LUNARI_MAX_USEC_PER_CALL:
+			push_error("Lunari benchmark exceeded %.2fus/call for %s: %.3fus/call" % [LUNARI_MAX_USEC_PER_CALL, method, lunari_result.usec_per_call])
+			quit(1)
+			return
+		report.append("%s Lunari=%dus %.3fus/call GDScript=%dus %.3fus/call" % [method, lunari_result.usec, lunari_result.usec_per_call, gd_result.usec, gd_result.usec_per_call])
 
 	lunari.queue_free()
 	gd.queue_free()

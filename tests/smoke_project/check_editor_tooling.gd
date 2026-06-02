@@ -40,6 +40,24 @@ func _run() -> void:
 		quit(1)
 		return
 
+	var definition: Dictionary = script.go_to_definition(&"title")
+	if not definition.get("found", false) or definition.get("line", 0) != 7:
+		push_error("Lunari go-to-definition did not find @title field: " + str(definition))
+		quit(1)
+		return
+
+	var user_hover: String = script.hover_symbol(&"title")
+	if not user_hover.contains("@title") or not user_hover.contains("String"):
+		push_error("Lunari hover did not describe @title: " + user_hover)
+		quit(1)
+		return
+
+	var godot_hover: String = script.hover_symbol(&"text", &"Label")
+	if not godot_hover.contains("text: string"):
+		push_error("Lunari hover did not use Godot API metadata for Label.text: " + godot_hover)
+		quit(1)
+		return
+
 	print("Lunari editor tooling formatter, outline, references, and rename passed")
 	quit(0)
 

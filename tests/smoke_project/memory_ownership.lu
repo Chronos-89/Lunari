@@ -1,0 +1,13 @@
+require "godot"
+
+class MemoryOwnership < Node
+  @label: Label
+
+  def initialize: void
+    @label = Label.new
+  end
+
+  def label_instance_id: Integer
+    return @label.get_instance_id()
+  end
+end

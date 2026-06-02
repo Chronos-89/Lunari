@@ -46,6 +46,14 @@ func _initialize() -> void:
 		push_error("Lunari API snapshot is missing Label.text default metadata")
 		quit(1)
 		return
+	if not text_property.get("default_value_valid", false):
+		push_error("Lunari API snapshot did not mark Label.text default as valid")
+		quit(1)
+		return
+	if text_property.get("default_value", "") != "\"\"":
+		push_error("Lunari API snapshot has wrong Label.text default: " + str(text_property.get("default_value", "")))
+		quit(1)
+		return
 
 	var node_class: Dictionary = _find_named(classes, "Node")
 	var add_child_method: Dictionary = _find_named(node_class.get("methods", []), "add_child")

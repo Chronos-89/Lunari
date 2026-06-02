@@ -21,4 +21,6 @@ public:
 	static Array collect_outline(const String &p_code);
 	static Array find_references(const String &p_code, const String &p_symbol);
 	static Dictionary rename_symbol(const String &p_code, const String &p_old_name, const String &p_new_name);
+	static Dictionary go_to_definition(const String &p_code, const String &p_symbol);
+	static String hover_symbol(const String &p_code, const String &p_symbol);
 };
