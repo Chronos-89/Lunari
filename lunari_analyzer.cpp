@@ -14,6 +14,7 @@
 #include "core/io/resource_loader.h"
 #include "core/object/class_db.h"
 #include "core/string/ustring.h"
+#include "core/templates/local_vector.h"
 
 static String _lunari_annotation_name(const String &p_annotation) {
 	String annotation = p_annotation.strip_edges();
@@ -36,6 +37,17 @@ static String _lunari_annotation_args(const String &p_annotation) {
 	return annotation.substr(paren + 1, annotation.length() - paren - 2).strip_edges();
 }
 
+static String _lunari_annotation_unquote(const String &p_value) {
+	String value = p_value.strip_edges();
+	if (value.length() >= 2 && ((value.begins_with("\"") && value.ends_with("\"")) || (value.begins_with("'") && value.ends_with("'")))) {
+		return value.substr(1, value.length() - 2);
+	}
+	if (value.begins_with(":")) {
+		return value.substr(1);
+	}
+	return value;
+}
+
 static bool _lunari_identifier_like(const String &p_value) {
 	if (p_value.is_empty()) {
 		return false;
@@ -55,6 +67,68 @@ static bool _lunari_identifier_like(const String &p_value) {
 		}
 	}
 	return true;
+}
+
+static Variant::Type _lunari_analyzer_variant_constructor_type(const StringName &p_name) {
+	if (p_name == "Vector2") {
+		return Variant::VECTOR2;
+	}
+	if (p_name == "Vector2i") {
+		return Variant::VECTOR2I;
+	}
+	if (p_name == "Rect2") {
+		return Variant::RECT2;
+	}
+	if (p_name == "Rect2i") {
+		return Variant::RECT2I;
+	}
+	if (p_name == "Vector3") {
+		return Variant::VECTOR3;
+	}
+	if (p_name == "Vector3i") {
+		return Variant::VECTOR3I;
+	}
+	if (p_name == "Transform2D") {
+		return Variant::TRANSFORM2D;
+	}
+	if (p_name == "Vector4") {
+		return Variant::VECTOR4;
+	}
+	if (p_name == "Vector4i") {
+		return Variant::VECTOR4I;
+	}
+	if (p_name == "Plane") {
+		return Variant::PLANE;
+	}
+	if (p_name == "Quaternion") {
+		return Variant::QUATERNION;
+	}
+	if (p_name == "AABB") {
+		return Variant::AABB;
+	}
+	if (p_name == "Basis") {
+		return Variant::BASIS;
+	}
+	if (p_name == "Transform3D") {
+		return Variant::TRANSFORM3D;
+	}
+	if (p_name == "Projection") {
+		return Variant::PROJECTION;
+	}
+	if (p_name == "Color") {
+		return Variant::COLOR;
+	}
+	if (p_name == "NodePath") {
+		return Variant::NODE_PATH;
+	}
+	if (p_name == "RID") {
+		return Variant::RID;
+	}
+	return Variant::NIL;
+}
+
+static const Variant **_lunari_analyzer_argptrs_ptr(LocalVector<const Variant *> &p_argptrs) {
+	return p_argptrs.size() == 0 ? nullptr : p_argptrs.ptr();
 }
 
 static String _lunari_resolve_required_script_path(String p_dependency, const String &p_owner_path) {
@@ -816,7 +890,7 @@ bool LunariAnalyzer::_is_known_type(const StringName &p_type) const {
 		}
 		return true;
 	}
-	if (type == "int" || type == "float" || type == "string" || type == "bool" || type == "symbol" || type == "void" || type == "never" || type == "nil" || type == "any" || type == "self" || type == "attached_class" || type == "Vector2" || type == "Vector3" || type == "Variant" || type == "Array" || type == "Hash" || type == "Set" || type == "Range" || type == "Enumerator" || type == "Numeric" || type == "Proc" || type == "Lambda" || type == "Method" || type == "UnboundMethod" || type == "Object" || type == "Class" || type == "Module" || type == "IO" || type == "File" || type == "Time" || type == "Date" || type == "DateTime" || type == "Regexp" || type == "MatchData" || type == "Exception" || type == "StandardError" || type == "ArgumentError" || type == "TypeError" || type == "NameError" || type == "NoMethodError" || type == "RuntimeError" || type == "IOError" || type == "Thread" || type == "Struct") {
+	if (type == "int" || type == "float" || type == "string" || type == "bool" || type == "symbol" || type == "void" || type == "never" || type == "nil" || type == "any" || type == "self" || type == "attached_class" || type == "Vector2" || type == "Vector2i" || type == "Vector3" || type == "Vector3i" || type == "Vector4" || type == "Vector4i" || type == "Color" || type == "Rect2" || type == "Rect2i" || type == "Transform2D" || type == "Transform3D" || type == "Plane" || type == "Quaternion" || type == "Basis" || type == "AABB" || type == "Projection" || type == "NodePath" || type == "RID" || type == "Variant" || type == "Array" || type == "Hash" || type == "Set" || type == "Range" || type == "Enumerator" || type == "Numeric" || type == "Proc" || type == "Lambda" || type == "Method" || type == "UnboundMethod" || type == "Object" || type == "Class" || type == "Module" || type == "IO" || type == "File" || type == "Time" || type == "Date" || type == "DateTime" || type == "Regexp" || type == "MatchData" || type == "Exception" || type == "StandardError" || type == "ArgumentError" || type == "TypeError" || type == "NameError" || type == "NoMethodError" || type == "RuntimeError" || type == "IOError" || type == "Thread" || type == "Struct" || type == "PackedByteArray" || type == "PackedInt32Array" || type == "PackedInt64Array" || type == "PackedFloat32Array" || type == "PackedFloat64Array" || type == "PackedStringArray" || type == "PackedVector2Array" || type == "PackedVector3Array" || type == "PackedColorArray") {
 		return true;
 	}
 	if (user_classes.has(type)) {
@@ -1156,6 +1230,43 @@ Variant LunariAnalyzer::_parse_literal(const String &p_value, const StringName &
 			return Vector3(parts[0].strip_edges().to_float(), parts[1].strip_edges().to_float(), parts[2].strip_edges().to_float());
 		}
 	}
+	Variant::Type constructor_type = _lunari_analyzer_variant_constructor_type(type);
+	if (constructor_type != Variant::NIL && value.begins_with(String(type) + "(") && value.ends_with(")")) {
+		String args = value.substr(String(type).length() + 1, value.length() - String(type).length() - 2);
+		Vector<Variant> constructor_args;
+		bool args_ok = true;
+		if (!args.strip_edges().is_empty()) {
+			for (const String &part : _split_top_level(args, ',')) {
+				String argument = part.strip_edges();
+				if (argument.is_valid_int()) {
+					constructor_args.push_back(argument.to_int());
+				} else if (argument.is_valid_float()) {
+					constructor_args.push_back(argument.to_float());
+				} else if ((argument.begins_with("\"") && argument.ends_with("\"")) || (argument.begins_with("'") && argument.ends_with("'"))) {
+					constructor_args.push_back(argument.substr(1, argument.length() - 2));
+				} else if (argument == "true" || argument == "false") {
+					constructor_args.push_back(argument == "true");
+				} else {
+					args_ok = false;
+					break;
+				}
+			}
+		}
+		if (args_ok) {
+			Callable::CallError error;
+			error.error = Callable::CallError::CALL_OK;
+			LocalVector<const Variant *> argptrs;
+			argptrs.resize(constructor_args.size());
+			for (int i = 0; i < constructor_args.size(); i++) {
+				argptrs[i] = &constructor_args[i];
+			}
+			Variant constructed;
+			Variant::construct(constructor_type, constructed, _lunari_analyzer_argptrs_ptr(argptrs), constructor_args.size(), error);
+			if (error.error == Callable::CallError::CALL_OK) {
+				return constructed;
+			}
+		}
+	}
 	if (r_valid) {
 		*r_valid = false;
 	}
@@ -1289,7 +1400,8 @@ bool LunariAnalyzer::_validate_annotations(const Vector<String> &p_annotations, 
 		}
 		seen.insert(name);
 		const bool export_layer = name == "export_flags_2d_render" || name == "export_flags_2d_physics" || name == "export_flags_2d_navigation" || name == "export_flags_3d_render" || name == "export_flags_3d_physics" || name == "export_flags_3d_navigation" || name == "export_flags_avoidance";
-		const bool known = name == "tool" || name == "export" || name == "export_range" || name == "export_enum" || name == "export_flags" || export_layer || name == "export_file" || name == "export_dir" || name == "export_group" || name == "export_subgroup" || name == "export_category" || name == "onready" || name == "rpc";
+		const bool export_hint = name == "export_multiline" || name == "export_exp_easing" || name == "export_color_no_alpha" || name == "export_placeholder" || name == "export_global_file" || name == "export_global_dir" || name == "export_save_file" || name == "export_global_save_file" || name == "export_node_path" || name == "export_resource_type" || name == "export_storage";
+		const bool known = name == "tool" || name == "export" || name == "export_range" || name == "export_enum" || name == "export_flags" || export_layer || export_hint || name == "export_file" || name == "export_dir" || name == "export_group" || name == "export_subgroup" || name == "export_category" || name == "onready" || name == "rpc";
 		if (!known) {
 			_add_error(p_line, vformat("unknown annotation '@%s'.", name));
 			return false;
@@ -1298,7 +1410,7 @@ bool LunariAnalyzer::_validate_annotations(const Vector<String> &p_annotations, 
 			_add_error(p_line, "@tool can only annotate a class.");
 			return false;
 		}
-		if ((name == "export" || name == "export_range" || name == "export_enum" || name == "export_flags" || export_layer || name == "export_file" || name == "export_dir" || name == "export_group" || name == "export_subgroup" || name == "export_category" || name == "onready") && p_target != "field") {
+		if ((name == "export" || name == "export_range" || name == "export_enum" || name == "export_flags" || export_layer || export_hint || name == "export_file" || name == "export_dir" || name == "export_group" || name == "export_subgroup" || name == "export_category" || name == "onready") && p_target != "field") {
 			_add_error(p_line, vformat("@%s can only annotate a field.", name));
 			return false;
 		}
@@ -1306,7 +1418,64 @@ bool LunariAnalyzer::_validate_annotations(const Vector<String> &p_annotations, 
 			_add_error(p_line, "@rpc can only annotate a method.");
 			return false;
 		}
-		if ((name == "export_range" || name == "export_enum" || name == "export_flags" || name == "export_group" || name == "export_subgroup" || name == "export_category") && _lunari_annotation_args(annotation).is_empty()) {
+		if (name == "rpc") {
+			const String args_text = _lunari_annotation_args(annotation);
+			Vector<String> args = args_text.is_empty() ? Vector<String>() : _split_top_level(args_text, ',');
+			int locality_args = 0;
+			int permission_args = 0;
+			int transfer_mode_args = 0;
+			int channel_args = 0;
+			for (int i = 0; i < args.size(); i++) {
+				String arg = args[i].strip_edges();
+				const int colon = arg.find(":");
+				if (colon > 0) {
+					String key = arg.substr(0, colon).strip_edges();
+					String value = arg.substr(colon + 1).strip_edges();
+					if (key != "channel") {
+						_add_error(p_line, vformat("invalid @rpc keyword argument '%s'.", key));
+						return false;
+					}
+					if (!value.is_valid_int()) {
+						_add_error(p_line, "@rpc channel must be an integer.");
+						return false;
+					}
+					channel_args++;
+					continue;
+				}
+				if (i == 3 && arg.is_valid_int()) {
+					channel_args++;
+					continue;
+				}
+				arg = _lunari_annotation_unquote(arg);
+				if (arg == "call_local" || arg == "call_remote") {
+					locality_args++;
+				} else if (arg == "any_peer" || arg == "authority") {
+					permission_args++;
+				} else if (arg == "reliable" || arg == "unreliable" || arg == "unreliable_ordered") {
+					transfer_mode_args++;
+				} else {
+					_add_error(p_line, "@rpc arguments must be one of call_local/call_remote, any_peer/authority, reliable/unreliable/unreliable_ordered, or channel: Integer.");
+					return false;
+				}
+			}
+			if (locality_args > 1) {
+				_add_error(p_line, "@rpc locality can only be specified once.");
+				return false;
+			}
+			if (permission_args > 1) {
+				_add_error(p_line, "@rpc permission can only be specified once.");
+				return false;
+			}
+			if (transfer_mode_args > 1) {
+				_add_error(p_line, "@rpc transfer mode can only be specified once.");
+				return false;
+			}
+			if (channel_args > 1) {
+				_add_error(p_line, "@rpc channel can only be specified once.");
+				return false;
+			}
+		}
+		if ((name == "export_range" || name == "export_enum" || name == "export_flags" || name == "export_group" || name == "export_subgroup" || name == "export_category" || name == "export_placeholder" || name == "export_node_path" || name == "export_resource_type") && _lunari_annotation_args(annotation).is_empty()) {
 			_add_error(p_line, vformat("@%s requires annotation arguments.", name));
 			return false;
 		}
@@ -2445,6 +2614,8 @@ LunariAnalyzer::TypeInfo LunariAnalyzer::_infer_expression_type(const String &p_
 			bool any_string = false;
 			bool all_numeric = true;
 			bool any_float = false;
+			StringName vector_type;
+			bool all_same_vector = true;
 			for (const String &part : parts) {
 				TypeInfo part_type = _infer_expression_type(part, p_line_number);
 				if (!part_type.known) {
@@ -2452,17 +2623,73 @@ LunariAnalyzer::TypeInfo LunariAnalyzer::_infer_expression_type(const String &p_
 					break;
 				}
 				StringName resolved_type = _resolve_type_alias(part_type.name);
-				if (resolved_type == "string" || resolved_type == "String") {
+				if (resolved_type == "Vector2" || resolved_type == "Vector3" || resolved_type == "Vector4") {
+					if (vector_type == StringName()) {
+						vector_type = resolved_type;
+					} else if (vector_type != resolved_type) {
+						all_same_vector = false;
+					}
+					all_numeric = false;
+				} else if (resolved_type == "string" || resolved_type == "String") {
 					any_string = true;
 					all_numeric = false;
+					all_same_vector = false;
 				} else if (resolved_type == "float" || resolved_type == "Float") {
 					any_float = true;
+					all_same_vector = false;
 				} else if (resolved_type != "int" && resolved_type != "Integer" && resolved_type != "Numeric") {
 					all_numeric = false;
+					all_same_vector = false;
 				}
+			}
+			if (all_known && vector_type != StringName() && all_same_vector) {
+				return { vector_type, true, false };
 			}
 			if (all_known && any_string) {
 				return { "string", true, false };
+			}
+			if (all_known && all_numeric) {
+				return { any_float ? StringName("float") : StringName("int"), true, false };
+			}
+		}
+	}
+	if (expression.find("-") > 0) {
+		Vector<String> parts = _split_top_level(expression, '-');
+		if (parts.size() > 1) {
+			bool all_known = true;
+			bool all_numeric = true;
+			bool any_float = false;
+			StringName vector_type;
+			bool all_same_vector = true;
+			for (const String &part : parts) {
+				String operand = part.strip_edges();
+				if (operand.is_empty()) {
+					all_known = false;
+					break;
+				}
+				TypeInfo part_type = _infer_expression_type(operand, p_line_number);
+				if (!part_type.known) {
+					all_known = false;
+					break;
+				}
+				StringName resolved_type = _resolve_type_alias(part_type.name);
+				if (resolved_type == "Vector2" || resolved_type == "Vector3" || resolved_type == "Vector4") {
+					if (vector_type == StringName()) {
+						vector_type = resolved_type;
+					} else if (vector_type != resolved_type) {
+						all_same_vector = false;
+					}
+					all_numeric = false;
+				} else if (resolved_type == "float" || resolved_type == "Float") {
+					any_float = true;
+					all_same_vector = false;
+				} else if (resolved_type != "int" && resolved_type != "Integer" && resolved_type != "Numeric") {
+					all_numeric = false;
+					all_same_vector = false;
+				}
+			}
+			if (all_known && vector_type != StringName() && all_same_vector) {
+				return { vector_type, true, false };
 			}
 			if (all_known && all_numeric) {
 				return { any_float ? StringName("float") : StringName("int"), true, false };
@@ -2480,6 +2707,8 @@ LunariAnalyzer::TypeInfo LunariAnalyzer::_infer_expression_type(const String &p_
 		bool all_known = true;
 		bool all_numeric = true;
 		bool any_float = false;
+		StringName vector_type;
+		bool vector_scaled_by_numeric = numeric_operator == '*' || numeric_operator == '/';
 		for (const String &part : parts) {
 			String operand = part.strip_edges();
 			if (operand.is_empty()) {
@@ -2492,12 +2721,23 @@ LunariAnalyzer::TypeInfo LunariAnalyzer::_infer_expression_type(const String &p_
 				break;
 			}
 			StringName resolved_type = _resolve_type_alias(part_type.name);
-			if (resolved_type == "float" || resolved_type == "Float") {
+			if (resolved_type == "Vector2" || resolved_type == "Vector3" || resolved_type == "Vector4") {
+				if (vector_type == StringName()) {
+					vector_type = resolved_type;
+				} else {
+					vector_scaled_by_numeric = false;
+				}
+				all_numeric = false;
+			} else if (resolved_type == "float" || resolved_type == "Float") {
 				any_float = true;
 			} else if (resolved_type != "int" && resolved_type != "Integer" && resolved_type != "Numeric") {
 				all_numeric = false;
+				vector_scaled_by_numeric = false;
 				break;
 			}
+		}
+		if (all_known && vector_type != StringName() && vector_scaled_by_numeric) {
+			return { vector_type, true, false };
 		}
 		if (all_known && all_numeric) {
 			return { any_float ? StringName("float") : StringName("int"), true, false };
@@ -2859,6 +3099,9 @@ LunariAnalyzer::TypeInfo LunariAnalyzer::_infer_expression_type(const String &p_
 		if (method == "new" || method.begins_with("new(")) {
 			StringName normalized_type = _normalize_type_name(base);
 			return { normalized_type, _is_known_type(normalized_type), false };
+		}
+		if (base == "Input" && method == "get_vector") {
+			return { "Vector2", true, false };
 		}
 		TypeInfo base_type = _infer_expression_type(base, p_line_number);
 		StringName base_user_class = _generic_base_type(base_type.name);
@@ -4132,6 +4375,9 @@ LunariAnalyzer::TypeInfo LunariAnalyzer::_infer_expression_type(const String &p_
 	int paren = expression.find("(");
 	if (paren > 0 && expression.ends_with(")")) {
 		String function_name = expression.substr(0, paren).strip_edges();
+		if (_lunari_analyzer_variant_constructor_type(function_name) != Variant::NIL) {
+			return { function_name, true, false };
+		}
 		if (function_name == "get_node") {
 			return { "Node", true, false };
 		}
@@ -7296,11 +7542,62 @@ LunariAnalyzer::Field LunariAnalyzer::_field_from_ast(const LunariAST::Node &p_n
 			field.is_exported = true;
 			field.is_public = true;
 			field.hint = PROPERTY_HINT_FILE;
-			field.hint_string = _lunari_annotation_args(annotation);
+			field.hint_string = _lunari_annotation_unquote(_lunari_annotation_args(annotation));
 		} else if (annotation_name == "export_dir") {
 			field.is_exported = true;
 			field.is_public = true;
 			field.hint = PROPERTY_HINT_DIR;
+		} else if (annotation_name == "export_global_file") {
+			field.is_exported = true;
+			field.is_public = true;
+			field.hint = PROPERTY_HINT_GLOBAL_FILE;
+			field.hint_string = _lunari_annotation_unquote(_lunari_annotation_args(annotation));
+		} else if (annotation_name == "export_global_dir") {
+			field.is_exported = true;
+			field.is_public = true;
+			field.hint = PROPERTY_HINT_GLOBAL_DIR;
+		} else if (annotation_name == "export_save_file") {
+			field.is_exported = true;
+			field.is_public = true;
+			field.hint = PROPERTY_HINT_SAVE_FILE;
+			field.hint_string = _lunari_annotation_unquote(_lunari_annotation_args(annotation));
+		} else if (annotation_name == "export_global_save_file") {
+			field.is_exported = true;
+			field.is_public = true;
+			field.hint = PROPERTY_HINT_GLOBAL_SAVE_FILE;
+			field.hint_string = _lunari_annotation_unquote(_lunari_annotation_args(annotation));
+		} else if (annotation_name == "export_multiline") {
+			field.is_exported = true;
+			field.is_public = true;
+			field.hint = PROPERTY_HINT_MULTILINE_TEXT;
+		} else if (annotation_name == "export_exp_easing") {
+			field.is_exported = true;
+			field.is_public = true;
+			field.hint = PROPERTY_HINT_EXP_EASING;
+			field.hint_string = _lunari_annotation_unquote(_lunari_annotation_args(annotation));
+		} else if (annotation_name == "export_color_no_alpha") {
+			field.is_exported = true;
+			field.is_public = true;
+			field.hint = PROPERTY_HINT_COLOR_NO_ALPHA;
+		} else if (annotation_name == "export_placeholder") {
+			field.is_exported = true;
+			field.is_public = true;
+			field.hint = PROPERTY_HINT_PLACEHOLDER_TEXT;
+			field.hint_string = _lunari_annotation_unquote(_lunari_annotation_args(annotation));
+		} else if (annotation_name == "export_node_path") {
+			field.is_exported = true;
+			field.is_public = true;
+			field.hint = PROPERTY_HINT_NODE_PATH_VALID_TYPES;
+			field.hint_string = _lunari_annotation_unquote(_lunari_annotation_args(annotation));
+		} else if (annotation_name == "export_resource_type") {
+			field.is_exported = true;
+			field.is_public = true;
+			field.hint = PROPERTY_HINT_RESOURCE_TYPE;
+			field.hint_string = _lunari_annotation_unquote(_lunari_annotation_args(annotation));
+		} else if (annotation_name == "export_storage") {
+			field.is_exported = true;
+			field.is_public = true;
+			field.usage = PROPERTY_USAGE_STORAGE;
 		}
 	}
 	return field;
@@ -7846,7 +8143,7 @@ void LunariAnalyzer::_analyze_ast_node(const LunariAST::Node &p_node, const Meth
 			return;
 		}
 		case LunariAST::Node::NODE_ASSIGN: {
-			if (String(p_node.name).contains(".")) {
+			if (String(p_node.name).contains(".") || String(p_node.name).contains("[")) {
 				_analyze_statement(p_node.raw, p_node.line, p_method);
 				return;
 			}
@@ -8090,7 +8387,8 @@ void LunariAnalyzer::_analyze_ast_block(const Vector<LunariAST::Node> &p_nodes, 
 	bool unreachable = false;
 	for (const LunariAST::Node &node : p_nodes) {
 		if (unreachable && node.kind != LunariAST::Node::NODE_UNKNOWN) {
-			_add_error(node.line, "unreachable code after return/break/next.");
+			// Unreachable code is surfaced through ScriptLanguage warnings so editor
+			// diagnostics can show it without rejecting otherwise valid scripts.
 			continue;
 		}
 		_analyze_ast_node(node, p_method);
@@ -8809,6 +9107,64 @@ void LunariAnalyzer::_analyze_statement(const String &p_statement, int p_line_nu
 	if (equals > 0) {
 		String lhs = statement.substr(0, equals).strip_edges();
 		String rhs_expression = statement.substr(equals + 1).strip_edges();
+		int bracket_open = lhs.find("[");
+		int bracket_close = lhs.rfind("]");
+		if (bracket_open > 0 && bracket_close == lhs.length() - 1) {
+			String target_name = lhs.substr(0, bracket_open).strip_edges();
+			String key_expression = lhs.substr(bracket_open + 1, bracket_close - bracket_open - 1).strip_edges();
+			if ((!local_type_map.has(target_name) && !field_map.has(target_name)) || key_expression.is_empty()) {
+				_add_error(p_line_number, vformat("indexed assignment target '%s' is not a declared collection.", target_name));
+				return;
+			}
+			if (!_validate_private_member_expression(key_expression, p_line_number) || !_validate_private_member_expression(rhs_expression, p_line_number)) {
+				return;
+			}
+			TypeInfo key_type = _infer_expression_type(key_expression, p_line_number);
+			TypeInfo rhs = _infer_expression_type(rhs_expression, p_line_number);
+			if (!key_type.known) {
+				_add_error(p_line_number, vformat("could not infer index type for assignment to '%s'.", lhs));
+				return;
+			}
+			if (!rhs.known) {
+				_add_error(p_line_number, vformat("could not infer expression type for assignment to '%s'.", lhs));
+				return;
+			}
+			StringName target_type = local_type_map.has(target_name) ? local_type_map[target_name] : field_map[target_name].type;
+			StringName resolved_target = _resolve_type_alias(target_type);
+			String target_type_text = String(resolved_target);
+			if (target_type_text == "Array" || target_type_text.ends_with("[]") || target_type_text.begins_with("Array<")) {
+				if (!_is_assignable("int", key_type.name)) {
+					_add_error(p_line_number, vformat("array index assignment expects Integer index, got '%s'.", key_type.name));
+					return;
+				}
+				StringName element_type = _collection_element_type(target_type);
+				if (!_is_assignable(element_type, rhs.name) && !_is_assignable(_resolve_type_alias(element_type), _resolve_type_alias(rhs.name)) && !_is_lunari_subclass(rhs.name, element_type)) {
+					_add_error(p_line_number, vformat("cannot assign '%s' to array element '%s' of type '%s'.", rhs.name, lhs, element_type));
+				}
+				return;
+			}
+			if (target_type_text == "Hash" || target_type_text.begins_with("Hash<")) {
+				StringName hash_key_type = "any";
+				StringName hash_value_type = "any";
+				if (target_type_text.begins_with("Hash<") && target_type_text.ends_with(">")) {
+					Vector<String> parts = _split_top_level(target_type_text.substr(5, target_type_text.length() - 6), ',');
+					if (parts.size() == 2) {
+						hash_key_type = _normalize_type_name(parts[0]);
+						hash_value_type = _normalize_type_name(parts[1]);
+					}
+				}
+				if (!_is_assignable(hash_key_type, key_type.name) && !_is_assignable(_resolve_type_alias(hash_key_type), _resolve_type_alias(key_type.name))) {
+					_add_error(p_line_number, vformat("cannot use '%s' as key for hash '%s' of key type '%s'.", key_type.name, target_name, hash_key_type));
+					return;
+				}
+				if (!_is_assignable(hash_value_type, rhs.name) && !_is_assignable(_resolve_type_alias(hash_value_type), _resolve_type_alias(rhs.name)) && !_is_lunari_subclass(rhs.name, hash_value_type)) {
+					_add_error(p_line_number, vformat("cannot assign '%s' to hash value '%s' of type '%s'.", rhs.name, lhs, hash_value_type));
+				}
+				return;
+			}
+			_add_error(p_line_number, vformat("indexed assignment target '%s' is not an Array or Hash.", target_name));
+			return;
+		}
 		int local_type_colon = lhs.find(":");
 		if (local_type_colon > 0) {
 			String local_name = lhs.substr(0, local_type_colon).strip_edges();
@@ -8919,6 +9275,16 @@ void LunariAnalyzer::_analyze_statement(const String &p_statement, int p_line_nu
 			_add_error(p_line_number, vformat("cannot assign '%s' to field '%s' of type '%s'.", rhs.name, lhs, field_map[lhs].type));
 		}
 		return;
+	}
+
+	if (_is_identifier(statement)) {
+		LunariGodotApi::Method native_method;
+		if (LunariGodotApi::get_method_info(result.native_base, statement, &native_method)) {
+			const int required_args = MAX(0, native_method.argument_types.size() - native_method.default_arguments.size());
+			if (required_args == 0) {
+				return;
+			}
+		}
 	}
 
 	TypeInfo expression_type = _infer_expression_type(statement, p_line_number);

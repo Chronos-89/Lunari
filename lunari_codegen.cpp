@@ -85,7 +85,9 @@ void LunariCodeGen::_emit_statement(const String &p_statement, int p_line, Lunar
 		String rhs = statement.substr(equals + 1).strip_edges();
 		int dot = lhs.find(".");
 		int colon = lhs.find(":");
-		if (colon > 0) {
+		if (lhs.contains("[")) {
+			p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_line, statement));
+		} else if (colon > 0) {
 			p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_LOCAL_ASSIGN, p_line, lhs.substr(0, colon).strip_edges(), lhs.substr(colon + 1).strip_edges(), rhs));
 		} else if (dot > 0) {
 			p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_PROPERTY_ASSIGN, p_line, lhs.substr(0, dot).strip_edges(), lhs.substr(dot + 1).strip_edges(), rhs));
@@ -108,6 +110,10 @@ void LunariCodeGen::_emit_ast_node(const LunariAST::Node &p_node, LunariBytecode
 				return;
 			case LunariAST::Node::NODE_ASSIGN:
 				if (p_node.raw.find(" if ") > 0 || p_node.raw.find(" unless ") > 0) {
+					p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_node.line, p_node.raw));
+					return;
+				}
+				if (String(p_node.name).contains("[")) {
 					p_function->instructions.push_back(_make_instruction(LunariBytecode::OP_CALL, p_node.line, p_node.raw));
 					return;
 				}

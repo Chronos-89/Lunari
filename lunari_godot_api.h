@@ -51,6 +51,7 @@ private:
 	static bool generated;
 
 	static void _generate_class(const StringName &p_class);
+	static void _apply_metadata_patches();
 	static bool _find_class_member_owner(const StringName &p_class, const StringName &p_member, bool (*p_has_member)(const ClassInfo &, const StringName &), StringName *r_owner);
 	static bool _has_property_member(const ClassInfo &p_class, const StringName &p_member);
 	static bool _has_method_member(const ClassInfo &p_class, const StringName &p_member);

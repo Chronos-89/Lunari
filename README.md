@@ -22,7 +22,7 @@ GDScript is pleasant and tightly integrated, but this fork is aimed at RPGs and 
 
 ## Current Status
 
-Lunari is actively experimental. It already covers editor integration, TypeRuby-style language depth, signal/await behavior, memory ownership, Godot API metadata, and performance benchmarks. It is not yet something I would honestly call a fully proven GDScript replacement for a large shipped game.
+Lunari is actively experimental. It already covers editor integration, TypeRuby-style language depth, signal/await behavior, memory ownership, Godot API metadata, project-wide editor tooling, migration source fixes, and performance benchmarks. It is not yet something I would honestly call a fully proven GDScript replacement for a large shipped game.
 
 The short version:
 
@@ -36,7 +36,7 @@ Ready to delete GDScript from Godot: not yet
 
 Lunari is a native Godot module. To use it, build this Godot fork from source with the module present.
 
-From a Visual Studio Developer PowerShell or Developer Command Prompt:
+From a Visual Studio Developer PowerShell or Developer Command Prompt, the current release-style editor build is:
 
 ```powershell
 cd D:\Godot-RPG
@@ -44,7 +44,9 @@ cd D:\Godot-RPG
 "C:\Users\esitt\AppData\Local\Programs\Python\Python313\python.exe" -m SCons `
   platform=windows `
   target=editor `
-  dev_build=yes `
+  production=yes `
+  debug_symbols=no `
+  separate_debug_symbols=no `
   d3d12=yes `
   -j8
 ```
@@ -52,11 +54,20 @@ cd D:\Godot-RPG
 The editor binary is written to:
 
 ```text
-D:\Godot-RPG\bin\godot.windows.editor.dev.x86_64.exe
-D:\Godot-RPG\bin\godot.windows.editor.dev.x86_64.console.exe
+D:\Godot-RPG\bin\godot.windows.editor.x86_64.exe
 ```
 
 This build does not enable Mono/.NET. Do not pass `module_mono_enabled=yes`.
+
+For the local packaged editor deliverable, copy the editor binary to `Godot.exe` and keep the Direct3D 12 runtime sidecars:
+
+```text
+D:\Godot-RPG\bin\Godot.exe
+D:\Godot-RPG\bin\D3D12Core.dll
+D:\Godot-RPG\bin\d3d12SDKLayers.dll
+```
+
+The packaged `bin` directory should contain only those three files.
 
 ## Installing Lunari In Your Own Godot Project
 
@@ -117,10 +128,10 @@ class Player < CharacterBody2D
 end
 ```
 
-Not:
+The older experimental form is no longer the preferred surface:
 
 ```ruby
-class Player < CharacterBody2D
+class Player :: CharacterBody2D
 end
 ```
 
@@ -389,18 +400,41 @@ Lunari currently includes:
 - Rename symbol.
 - Go to definition.
 - Hover docs from Godot API metadata.
+- Documentation summary and searchable documentation index.
+- Project outline, references, rename, and go-to-definition helpers.
+- Project symbol index with completion entries, duplicate detection, category buckets, and per-file lookup tables.
+- Project dependency graph with load order, missing dependency detection, cycles, and reload invalidation order.
+- Project readiness analysis for Lunari/GDScript mix, migration fixes, warnings, dependencies, and replacement score.
 - Bytecode disassembly.
 - Godot API snapshot generation.
+
+The editor-facing helper methods are exposed on `LunariScript`, so tools can call them without reaching into module internals:
+
+| Method | Purpose |
+|---|---|
+| `validate_source_summary(code, path)` | Syntax/analyzer validation with errors, warnings, safe lines, help text, and source fixes. |
+| `complete_source_code(code)` | Code-completion options for language keywords, Godot API members, constants, annotations, and local script symbols. |
+| `get_hover_summary(symbol, owner_class = "")` | Structured hover result for Lunari symbols, language annotations, and Godot API members. |
+| `get_documentation_index(query = "", class = "")` | Searchable language, script, and Godot API documentation entries. |
+| `collect_project_outline(sources)` | Cross-file symbol outline with source paths. |
+| `build_project_symbol_index(sources)` | Cross-file symbol/completion index with `by_name`, `by_kind`, `by_path`, duplicate, and graph metadata. |
+| `find_project_references(sources, symbol)` | Cross-file references. |
+| `go_to_project_definition(sources, symbol)` | First matching project definition with path and line. |
+| `rename_project_symbol(sources, old_name, new_name)` | Cross-file rename result with updated source map. |
+| `analyze_project_graph(sources, changed_paths = [])` | Dependency graph, load order, cycles, missing dependencies, and reload invalidation order. |
+| `analyze_project_readiness(sources)` | Migration/replacement summary, warnings, fix count, dependency graph, and readiness score. |
 
 ## Benchmarks
 
 The benchmark creates equivalent Lunari and GDScript nodes, warms them up, runs each method 4,096 times, compares returned values, and reports total microseconds plus microseconds per call.
 
-The current strict target is:
+The current strict target for measured hot paths is:
 
 ```text
 Lunari <= 1.0 microsecond per call
 ```
+
+The array, hash, stat, event, inventory, signal, and cached resource cases below are simple typed gameplay idioms that are recognized by cached bytecode method plans.
 
 Latest local run on this machine:
 
@@ -408,7 +442,7 @@ Latest local run on this machine:
 Godot v4.6.3.stable.custom_build
 D3D12 12_0
 GPU: NVIDIA GeForce RTX 5090
-Build: Windows editor dev build
+Build: Windows editor production build
 Iterations: 4,096
 Warmup iterations: 256
 ```
@@ -417,9 +451,18 @@ Warmup iterations: 256
 
 | Area | Lunari total | Lunari per call | GDScript total | GDScript per call | Lunari speedup |
 |---|---:|---:|---:|---:|---:|
-| Integer arithmetic | 805 us | 0.197 us | 1,868 us | 0.456 us | 2.31x |
-| String construction | 1,490 us | 0.364 us | 4,367 us | 1.066 us | 2.93x |
-| `Label.text` property set/get | 2,848 us | 0.695 us | 9,022 us | 2.203 us | 3.17x |
+| Integer arithmetic | 266 us | 0.065 us | 400 us | 0.098 us | 1.50x |
+| String construction | 391 us | 0.095 us | 1,036 us | 0.253 us | 2.65x |
+| `Label.text` property set/get | 679 us | 0.166 us | 2,308 us | 0.563 us | 3.40x |
+| Default arguments | 268 us | 0.065 us | 399 us | 0.097 us | 1.49x |
+| Eight-argument function call | 1,219 us | 0.298 us | 1,834 us | 0.448 us | 1.50x |
+| Array iteration | 288 us | 0.070 us | 1,567 us | 0.383 us | 5.44x |
+| Hash lookup and mutation | 289 us | 0.071 us | 2,009 us | 0.490 us | 6.95x |
+| RPG stat formula | 286 us | 0.070 us | 511 us | 0.125 us | 1.79x |
+| RPG event condition | 305 us | 0.074 us | 2,091 us | 0.510 us | 6.86x |
+| Inventory value scan | 297 us | 0.073 us | 1,639 us | 0.400 us | 5.52x |
+| Signal emit | 469 us | 0.115 us | 590 us | 0.144 us | 1.26x |
+| Cached LunariScript resource load | 288 us | 0.070 us | 3,827 us | 0.934 us | 13.29x |
 
 ### What These Benchmarks Cover
 
@@ -488,6 +531,8 @@ These are microbenchmarks, not whole-game frame timings. They are useful because
 
 The current fastest path includes a dedicated `Label.text` fast setter used by Lunari. That is intentionally aggressive and should be treated as a hot-path optimization, not proof that every Godot property is equally fast.
 
+Array iteration, hash lookup/mutation, stat formulas, event conditions, inventory value scans, signal emission, and cached LunariScript resource loading are now part of the benchmark harness, pass value-parity checks, and stay under the current 1.0 microsecond-per-call target for the measured patterns. This is not proof that every collection-heavy gameplay loop is fast yet; broader collection bytecode coverage and larger gameplay-shaped loop benchmarks are still needed.
+
 ### Benchmark Areas Still Needed
 
 To honestly claim full replacement performance, Lunari still needs broader benchmark coverage:
@@ -497,23 +542,28 @@ To honestly claim full replacement performance, Lunari still needs broader bench
 | Arithmetic | Measured |
 | String construction | Measured |
 | Node property set/get | Measured |
-| Function calls with many arguments | Needed |
-| Default arguments | Tested, benchmark needed |
+| Function calls with many arguments | Measured |
+| Default arguments | Measured |
 | Keyword arguments | Tested, benchmark needed |
-| Array iteration | Tested, benchmark needed |
-| Hash lookup and mutation | Tested, benchmark needed |
+| Array iteration | Measured |
+| Hash lookup and mutation | Measured |
+| RPG stat formulas | Measured |
+| RPG event conditions | Measured |
+| Inventory value scans | Measured |
 | Blocks/lambdas/procs | Tested, benchmark needed |
-| Signal connect/emit | Tested, benchmark needed |
+| Signal emit | Measured |
+| Signal connect | Tested, benchmark needed |
 | Await/coroutine resume | Tested, benchmark needed |
-| Resource load/preload | Tested, benchmark needed |
+| Cached LunariScript resource load | Measured |
+| Resource preload | Tested, benchmark needed |
 | PackedScene instantiate | Needed |
 | CharacterBody2D movement loop | Needed |
 | Physics process dispatch | Needed |
 | Input polling | Needed |
 | Tilemap/event-style scripting | Needed |
 | Hot reload state preservation | Tested, benchmark/stress needed |
-| Large project analyzer time | Needed |
-| Autocomplete latency | Needed |
+| Large project analyzer time | Project graph/index tested, benchmark needed |
+| Autocomplete latency | Completion surface tested, benchmark needed |
 | Debugger stack/locals overhead | Needed |
 
 ## Design Rules
@@ -550,7 +600,7 @@ The next big work is not more syntax for its own sake. It is replacement confide
 3. Stress test hot reload on deeper object graphs.
 4. Prove analyzer performance on large projects.
 5. Build RPG/event scripting fixtures.
-6. Add migration tooling for GDScript-to-Lunari experiments.
+6. Turn the current migration source fixes into a fuller conversion workflow.
 7. Continue tightening Godot API metadata and typed native call paths.
 
 ## License

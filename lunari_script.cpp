@@ -21,7 +21,9 @@
 #include "core/error/error_macros.h"
 #include "core/debugger/engine_debugger.h"
 #include "core/debugger/script_debugger.h"
+#include "core/io/dir_access.h"
 #include "core/io/file_access.h"
+#include "core/io/resource_loader.h"
 #include "core/math/math_funcs.h"
 #include "core/math/vector2.h"
 #include "core/math/vector3.h"
@@ -30,6 +32,8 @@
 #include "core/string/print_string.h"
 #include "core/templates/local_vector.h"
 #include "scene/gui/label.h"
+#include "scene/main/multiplayer_api.h"
+#include "scene/main/multiplayer_peer.h"
 #include "scene/main/node.h"
 #include "scene/resources/packed_scene.h"
 #include "modules/regex/regex.h"
@@ -64,7 +68,61 @@ static String _lunari_script_unquote(const String &p_value) {
 	if (value.length() >= 2 && value.begins_with("\"") && value.ends_with("\"")) {
 		return value.substr(1, value.length() - 2);
 	}
+	if (value.length() >= 2 && value.begins_with("'") && value.ends_with("'")) {
+		return value.substr(1, value.length() - 2);
+	}
+	if (value.begins_with(":")) {
+		return value.substr(1);
+	}
 	return value;
+}
+
+static Dictionary _lunari_script_rpc_config_from_annotation(const String &p_annotation) {
+	Dictionary config;
+	config["rpc_mode"] = MultiplayerAPI::RPC_MODE_AUTHORITY;
+	config["call_local"] = false;
+	config["transfer_mode"] = MultiplayerPeer::TRANSFER_MODE_RELIABLE;
+	config["channel"] = 0;
+
+	const String args_text = _lunari_script_annotation_args(p_annotation);
+	if (args_text.is_empty()) {
+		return config;
+	}
+
+	Vector<String> args = _lunari_split_top_level(args_text, ',');
+	for (int i = 0; i < args.size(); i++) {
+		String arg = args[i].strip_edges();
+		int colon = arg.find(":");
+		if (colon > 0) {
+			String key = arg.substr(0, colon).strip_edges();
+			String value = arg.substr(colon + 1).strip_edges();
+			if (key == "channel" && value.is_valid_int()) {
+				config["channel"] = value.to_int();
+			}
+			continue;
+		}
+		if (i == 3 && arg.is_valid_int()) {
+			config["channel"] = arg.to_int();
+			continue;
+		}
+		arg = _lunari_script_unquote(arg);
+		if (arg == "call_local") {
+			config["call_local"] = true;
+		} else if (arg == "call_remote") {
+			config["call_local"] = false;
+		} else if (arg == "any_peer") {
+			config["rpc_mode"] = MultiplayerAPI::RPC_MODE_ANY_PEER;
+		} else if (arg == "authority") {
+			config["rpc_mode"] = MultiplayerAPI::RPC_MODE_AUTHORITY;
+		} else if (arg == "reliable") {
+			config["transfer_mode"] = MultiplayerPeer::TRANSFER_MODE_RELIABLE;
+		} else if (arg == "unreliable") {
+			config["transfer_mode"] = MultiplayerPeer::TRANSFER_MODE_UNRELIABLE;
+		} else if (arg == "unreliable_ordered") {
+			config["transfer_mode"] = MultiplayerPeer::TRANSFER_MODE_UNRELIABLE_ORDERED;
+		}
+	}
+	return config;
 }
 
 static StringName _lunari_editor_property_name(const StringName &p_field_name) {
@@ -161,6 +219,105 @@ static void _lunari_make_argptrs(const Vector<Variant> &p_args, LocalVector<cons
 
 static const Variant **_lunari_argptrs_ptr(LocalVector<const Variant *> &p_argptrs) {
 	return p_argptrs.size() == 0 ? nullptr : p_argptrs.ptr();
+}
+
+static Variant::Type _lunari_variant_constructor_type(const StringName &p_name) {
+	if (p_name == "Vector2") {
+		return Variant::VECTOR2;
+	}
+	if (p_name == "Vector2i") {
+		return Variant::VECTOR2I;
+	}
+	if (p_name == "Rect2") {
+		return Variant::RECT2;
+	}
+	if (p_name == "Rect2i") {
+		return Variant::RECT2I;
+	}
+	if (p_name == "Vector3") {
+		return Variant::VECTOR3;
+	}
+	if (p_name == "Vector3i") {
+		return Variant::VECTOR3I;
+	}
+	if (p_name == "Transform2D") {
+		return Variant::TRANSFORM2D;
+	}
+	if (p_name == "Vector4") {
+		return Variant::VECTOR4;
+	}
+	if (p_name == "Vector4i") {
+		return Variant::VECTOR4I;
+	}
+	if (p_name == "Plane") {
+		return Variant::PLANE;
+	}
+	if (p_name == "Quaternion") {
+		return Variant::QUATERNION;
+	}
+	if (p_name == "AABB") {
+		return Variant::AABB;
+	}
+	if (p_name == "Basis") {
+		return Variant::BASIS;
+	}
+	if (p_name == "Transform3D") {
+		return Variant::TRANSFORM3D;
+	}
+	if (p_name == "Projection") {
+		return Variant::PROJECTION;
+	}
+	if (p_name == "Color") {
+		return Variant::COLOR;
+	}
+	if (p_name == "NodePath") {
+		return Variant::NODE_PATH;
+	}
+	if (p_name == "RID") {
+		return Variant::RID;
+	}
+	if (p_name == "PackedByteArray") {
+		return Variant::PACKED_BYTE_ARRAY;
+	}
+	if (p_name == "PackedInt32Array") {
+		return Variant::PACKED_INT32_ARRAY;
+	}
+	if (p_name == "PackedInt64Array") {
+		return Variant::PACKED_INT64_ARRAY;
+	}
+	if (p_name == "PackedFloat32Array") {
+		return Variant::PACKED_FLOAT32_ARRAY;
+	}
+	if (p_name == "PackedFloat64Array") {
+		return Variant::PACKED_FLOAT64_ARRAY;
+	}
+	if (p_name == "PackedStringArray") {
+		return Variant::PACKED_STRING_ARRAY;
+	}
+	if (p_name == "PackedVector2Array") {
+		return Variant::PACKED_VECTOR2_ARRAY;
+	}
+	if (p_name == "PackedVector3Array") {
+		return Variant::PACKED_VECTOR3_ARRAY;
+	}
+	if (p_name == "PackedColorArray") {
+		return Variant::PACKED_COLOR_ARRAY;
+	}
+	return Variant::NIL;
+}
+
+static bool _lunari_construct_builtin_variant(const StringName &p_name, const Vector<Variant> &p_args, Variant *r_value) {
+	ERR_FAIL_NULL_V(r_value, false);
+	Variant::Type type = _lunari_variant_constructor_type(p_name);
+	if (type == Variant::NIL) {
+		return false;
+	}
+	Callable::CallError error;
+	error.error = Callable::CallError::CALL_OK;
+	LocalVector<const Variant *> argptrs;
+	_lunari_make_argptrs(p_args, argptrs);
+	Variant::construct(type, *r_value, _lunari_argptrs_ptr(argptrs), p_args.size(), error);
+	return error.error == Callable::CallError::CALL_OK;
 }
 
 static Vector<String> _lunari_split_type_parts(const String &p_text) {
@@ -575,25 +732,86 @@ static String _lunari_help_text(const String &p_symbol) {
 		map["attr_writer"] = "Creates a typed writer method for an instance variable.";
 		map["attr_accessor"] = "Creates typed reader and writer methods for an instance variable.";
 		map["@export"] = "Exports an instance variable to the Godot Inspector without showing the @ prefix.";
+		map["@export_range"] = "Exports a numeric instance variable with an Inspector range: @export_range(0, 100, 1) @hp: Integer = 100.";
+		map["@export_enum"] = "Exports a String/Integer choice list to the Inspector.";
+		map["@export_flags"] = "Exports bit flags to the Inspector.";
+		map["@export_file"] = "Exports a file path with optional filters.";
+		map["@export_dir"] = "Exports a directory path.";
+		map["@export_global_file"] = "Exports an absolute/global file path with optional filters.";
+		map["@export_global_dir"] = "Exports an absolute/global directory path.";
+		map["@export_save_file"] = "Exports a save-file path with optional filters.";
+		map["@export_global_save_file"] = "Exports an absolute/global save-file path with optional filters.";
+		map["@export_multiline"] = "Exports a String using the Inspector multiline text editor.";
+		map["@export_exp_easing"] = "Exports a Float using Godot's exponential easing editor.";
+		map["@export_color_no_alpha"] = "Exports a Color without exposing alpha.";
+		map["@export_placeholder"] = "Exports a String with Inspector placeholder text.";
+		map["@export_node_path"] = "Exports a NodePath constrained to specific node types.";
+		map["@export_resource_type"] = "Exports a Resource constrained to specific resource types.";
+		map["@export_storage"] = "Stores a typed field in the resource without showing it in the Inspector.";
+		map["@export_group"] = "Starts an Inspector property group.";
+		map["@export_subgroup"] = "Starts an Inspector property subgroup.";
+		map["@export_category"] = "Starts an Inspector property category.";
 		map["@onready"] = "Initializes an instance variable after the node enters the scene tree. Supports $NodePath shorthand.";
 		map["@tool"] = "Runs the script in the editor when attached to a node or resource.";
-		map["@rpc"] = "Marks a method for Godot multiplayer RPC. Arguments mirror Godot RPC configuration.";
+		map["@rpc"] = "Marks a method for Godot multiplayer RPC: @rpc(\"any_peer\", \"call_local\", \"reliable\", channel: 0).";
 		map["signal"] = "Declares a typed Godot signal, e.g. signal greeted(message: String).";
 		map["await"] = "Suspends execution until a signal/coroutine completes.";
 		map["self"] = "The current object. Use self.name for Godot properties and @name for Lunari instance variables.";
 		map["super"] = "Calls the parent implementation of the current method, matching Ruby behavior.";
+		map["type"] = "Declares a TypeRuby-style alias, e.g. type ItemId = String.";
+		map["abstract"] = "Marks a class or method contract abstract.";
+		map["include"] = "Includes module instance methods into a class.";
+		map["prepend"] = "Prepends module instance methods ahead of the class implementation.";
+		map["extend"] = "Extends a class/object with module methods.";
+		map["load"] = "Loads a Godot Resource from a path.";
+		map["preload"] = "Loads a Godot Resource at parse/load time.";
+		map["$NodePath"] = "Godot node lookup shorthand. Example: @onready @label: Label = $Hud/Label.";
+		map["%SceneUniqueName"] = "Godot scene-unique node lookup shorthand. Example: @onready @label: Label = %TitleLabel.";
+		map["ready"] = "Godot lifecycle method called when a node enters the scene tree. Write def ready: void.";
+		map["process"] = "Godot lifecycle method called every rendered frame. Write def process(delta: Float): void.";
+		map["physics_process"] = "Godot lifecycle method called every physics tick. Write def physics_process(delta: Float): void.";
+		map["input"] = "Godot lifecycle method for input events. Write def input(event: InputEvent): void.";
+		map["unhandled_input"] = "Godot lifecycle method for unhandled input events.";
 		map["String"] = "Ruby/Lunari text type. Common methods: capitalize, upcase, downcase, split, strip, length.";
 		map["Integer"] = "Whole-number type.";
 		map["Float"] = "Floating-point type.";
 		map["Boolean"] = "true or false.";
 		map["Nil"] = "No value. Use nullable unions such as String | Nil.";
+		map["Variant"] = "Any Godot Variant value. Prefer concrete types where possible.";
+		map["Symbol"] = "Ruby-style interned name, backed by Godot StringName.";
 		map["Array"] = "Typed sequence. Prefer Array<String>, Array<Integer>, or Array<Node2D>.";
 		map["Hash"] = "Typed dictionary. Prefer Hash<String, Integer> or Hash<Symbol, Variant>.";
 		map["Callable"] = "Typed callable function reference.";
 		map["Signal"] = "Typed Godot signal value.";
+		map["Resource"] = "Godot resource base type for textures, packed scenes, data assets, and custom resources.";
+		map["PackedScene"] = "Godot resource containing an instantiable scene.";
 		map["NodePath"] = "Path to a node or resource path segment.";
 		map["Vector2"] = "2D vector value used by Node2D, physics, movement, and positions.";
+		map["Vector2i"] = "Integer 2D vector value used by grids, tiles, and pixel coordinates.";
 		map["Vector3"] = "3D vector value used by Node3D, physics, movement, and positions.";
+		map["Vector3i"] = "Integer 3D vector value used by grids, cells, and voxel coordinates.";
+		map["Vector4"] = "4D vector value.";
+		map["Vector4i"] = "Integer 4D vector value.";
+		map["Rect2"] = "Floating-point 2D rectangle.";
+		map["Rect2i"] = "Integer 2D rectangle.";
+		map["Transform2D"] = "2D transform matrix.";
+		map["Plane"] = "3D plane value.";
+		map["Quaternion"] = "3D rotation quaternion.";
+		map["AABB"] = "3D axis-aligned bounding box.";
+		map["Basis"] = "3D rotation/scale basis.";
+		map["Transform3D"] = "3D transform matrix.";
+		map["Projection"] = "3D projection matrix.";
+		map["Color"] = "RGBA color value.";
+		map["RID"] = "Godot low-level resource identifier.";
+		map["PackedByteArray"] = "Packed byte array.";
+		map["PackedInt32Array"] = "Packed 32-bit integer array.";
+		map["PackedInt64Array"] = "Packed 64-bit integer array.";
+		map["PackedFloat32Array"] = "Packed 32-bit float array.";
+		map["PackedFloat64Array"] = "Packed 64-bit float array.";
+		map["PackedStringArray"] = "Packed String array.";
+		map["PackedVector2Array"] = "Packed Vector2 array.";
+		map["PackedVector3Array"] = "Packed Vector3 array.";
+		map["PackedColorArray"] = "Packed Color array.";
 		return map;
 	}();
 	HashMap<String, String>::ConstIterator E = help.find(p_symbol);
@@ -697,18 +915,23 @@ static void _lunari_collect_statement_local_types(const Vector<LunariAST::Node> 
 	ERR_FAIL_NULL(r_types);
 	for (const LunariAST::Node &node : p_nodes) {
 		if (node.kind == LunariAST::Node::NODE_LOCAL_ASSIGN || node.kind == LunariAST::Node::NODE_ASSIGN) {
-			String lhs = node.name;
-			int colon = lhs.find(":");
-			if (colon > 0) {
-				String local_name = lhs.substr(0, colon).strip_edges();
-				String type = lhs.substr(colon + 1).strip_edges();
-				int equals = type.find("=");
-				if (equals >= 0) {
-					type = type.substr(0, equals).strip_edges();
+			String local_name = String(node.name).strip_edges();
+			String type = String(node.type).strip_edges();
+			if (type.is_empty()) {
+				int colon = local_name.find(":");
+				if (colon > 0) {
+					type = local_name.substr(colon + 1).strip_edges();
+					local_name = local_name.substr(0, colon).strip_edges();
 				}
-				if (!local_name.is_empty() && !type.is_empty()) {
-					(*r_types)[StringName(local_name)] = StringName(type);
-				}
+			}
+			int equals = type.find("=");
+			if (equals >= 0) {
+				type = type.substr(0, equals).strip_edges();
+			}
+			if (!local_name.is_empty() && !type.is_empty()) {
+				(*r_types)[StringName(local_name)] = StringName(type);
+				(*r_types)[_lunari_editor_symbol_lookup_name(StringName(local_name))] = StringName(type);
+				(*r_types)[_lunari_plain_symbol_name(StringName(local_name))] = StringName(type);
 			}
 		}
 		_lunari_collect_statement_local_types(node.children, r_types);
@@ -717,7 +940,44 @@ static void _lunari_collect_statement_local_types(const Vector<LunariAST::Node> 
 	}
 }
 
-static HashMap<StringName, StringName> _lunari_editor_type_map(const LunariParser::Result &p_result, const LunariAST::Document &p_ast, const StringName &p_owner_class) {
+static void _lunari_collect_line_declared_types(const String &p_code, HashMap<StringName, StringName> *r_types) {
+	ERR_FAIL_NULL(r_types);
+	PackedStringArray lines = p_code.split("\n");
+	for (int i = 0; i < lines.size(); i++) {
+		String line = String(lines[i]).strip_edges();
+		if (line.is_empty() || line.begins_with("#") || line.begins_with("class ") || line.begins_with("module ") || line.begins_with("def ") || line.begins_with("signal ")) {
+			continue;
+		}
+		int colon = line.find(":");
+		if (colon <= 0) {
+			continue;
+		}
+		String name = line.substr(0, colon).strip_edges();
+		if (name.begins_with("@export ") || name.begins_with("@onready ")) {
+			name = name.get_slice(" ", name.get_slice_count(" ") - 1).strip_edges();
+		}
+		if (name.contains(" ") || name.contains(".") || name.contains("(") || name.contains(")")) {
+			continue;
+		}
+		String type = line.substr(colon + 1).strip_edges();
+		int equals = type.find("=");
+		if (equals >= 0) {
+			type = type.substr(0, equals).strip_edges();
+		}
+		int trailing_space = type.find(" ");
+		if (trailing_space > 0) {
+			type = type.substr(0, trailing_space).strip_edges();
+		}
+		if (name.is_empty() || type.is_empty()) {
+			continue;
+		}
+		(*r_types)[StringName(name)] = StringName(type);
+		(*r_types)[_lunari_editor_symbol_lookup_name(StringName(name))] = StringName(type);
+		(*r_types)[_lunari_plain_symbol_name(StringName(name))] = StringName(type);
+	}
+}
+
+static HashMap<StringName, StringName> _lunari_editor_type_map(const LunariParser::Result &p_result, const LunariAST::Document &p_ast, const StringName &p_owner_class, const String &p_code = String()) {
 	HashMap<StringName, StringName> types;
 	types["self"] = p_owner_class;
 	for (const LunariParser::Class &klass : p_result.classes) {
@@ -733,6 +993,9 @@ static HashMap<StringName, StringName> _lunari_editor_type_map(const LunariParse
 		}
 	}
 	_lunari_collect_statement_local_types(p_ast.children, &types);
+	if (!p_code.is_empty()) {
+		_lunari_collect_line_declared_types(p_code, &types);
+	}
 	return types;
 }
 
@@ -910,6 +1173,8 @@ void LunariLanguage::record_profile_call(const StringName &p_function) {
 	}
 	uint64_t count = profile_call_counts.has(p_function) ? profile_call_counts[p_function] : 0;
 	profile_call_counts[p_function] = count + 1;
+	uint64_t frame_count = profile_frame_call_counts.has(p_function) ? profile_frame_call_counts[p_function] : 0;
+	profile_frame_call_counts[p_function] = frame_count + 1;
 }
 
 void LunariLanguage::push_debug_frame(const DebugFrame &p_frame) {
@@ -2470,6 +2735,30 @@ static Variant _lunari_hash_get_user_value(const Dictionary &p_hash, const Varia
 		return p_hash[StringName(String(p_key))];
 	}
 	return Variant();
+}
+
+static void _lunari_hash_set_user_value(Dictionary &r_hash, const Variant &p_key, const Variant &p_value) {
+	if (r_hash.has(p_key) && !_lunari_is_hash_metadata_key(p_key)) {
+		r_hash[p_key] = p_value;
+		return;
+	}
+	if (p_key.get_type() == Variant::STRING_NAME) {
+		const String string_key = String(StringName(p_key));
+		if (r_hash.has(string_key) && !_lunari_is_hash_metadata_key(string_key)) {
+			r_hash[string_key] = p_value;
+			return;
+		}
+	}
+	if (p_key.get_type() == Variant::STRING) {
+		const StringName string_name_key = StringName(String(p_key));
+		if (r_hash.has(string_name_key)) {
+			r_hash[string_name_key] = p_value;
+			return;
+		}
+	}
+	if (!_lunari_is_hash_metadata_key(p_key)) {
+		r_hash[p_key] = p_value;
+	}
 }
 
 static bool _lunari_variant_less_for_sort(const Variant &p_left, const Variant &p_right) {
@@ -8366,6 +8655,10 @@ Variant LunariExpressionParser::_call_global(const String &p_identifier, const V
 	if (p_identifier == "Vector3" && p_args.size() == 3) {
 		return Vector3(double(p_args[0]), double(p_args[1]), double(p_args[2]));
 	}
+	Variant constructed;
+	if (_lunari_construct_builtin_variant(p_identifier, p_args, &constructed)) {
+		return constructed;
+	}
 	if ((p_identifier == "load" || p_identifier == "preload") && p_args.size() == 1 && p_args[0].get_type() == Variant::STRING) {
 		Ref<Resource> resource = ResourceLoader::load(String(p_args[0]));
 		valid = resource.is_valid();
@@ -8732,6 +9025,14 @@ bool LunariScriptInstance::has_method(const StringName &p_method) const {
 Variant LunariScriptInstance::callp(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) {
 	r_error.error = Callable::CallError::CALL_OK;
 	StringName method = _lunari_normalize_callback_name(p_method);
+	auto record_profile_call = [&]() {
+		LunariLanguage *language = LunariLanguage::get_singleton();
+		if (language && language->is_profiling_active() && script.is_valid()) {
+			const StringName owner_class = script->get_global_name();
+			StringName profile_signature = owner_class == StringName() ? method : StringName(String(owner_class) + "::" + String(method));
+			language->record_profile_call(profile_signature);
+		}
+	};
 	if (p_argcount == 1) {
 		if (cached_fast_method != method) {
 			HashMap<StringName, void *>::Iterator CachedPlan = cached_fast_plans.find(method);
@@ -8745,15 +9046,18 @@ Variant LunariScriptInstance::callp(const StringName &p_method, const Variant **
 			const Variant &arg0 = *p_args[0];
 			if (plan->op_count == 1 && plan->first_opcode == LunariBytecode::OP_RETURN) {
 				if (plan->first_expression_kind == 1 && arg0.get_type() == Variant::INT) {
+					record_profile_call();
 					return int64_t(arg0) * plan->first_mul + plan->first_add;
 				}
 				if (plan->first_expression_kind == 2) {
 					if (arg0.get_type() == Variant::INT) {
 						int64_t index = int64_t(arg0);
 						if (index >= 0 && index < plan->first_small_int_strings.size()) {
+							record_profile_call();
 							return plan->first_small_int_strings[index];
 						}
 					}
+					record_profile_call();
 					return plan->first_string_prefix + (arg0.get_type() == Variant::INT ? itos(int64_t(arg0)) : String(arg0));
 				}
 			}
@@ -8778,6 +9082,7 @@ Variant LunariScriptInstance::callp(const StringName &p_method, const Variant **
 							text = plan->first_string_prefix + String(arg0);
 						}
 						label->set_text_lunari_fast(text);
+						record_profile_call();
 						return text;
 					}
 				}
@@ -8806,6 +9111,7 @@ Variant LunariScriptInstance::callp(const StringName &p_method, const Variant **
 							Label *label = Object::cast_to<Label>(target_object);
 							if (label) {
 								label->set_text_lunari_fast(String(value));
+								record_profile_call();
 								return value;
 							}
 						}
@@ -8815,6 +9121,14 @@ Variant LunariScriptInstance::callp(const StringName &p_method, const Variant **
 		}
 		Variant fast_return_value;
 		if (script->_execute_fast_instance_bytecode_methodp(method, this, p_args, p_argcount, &fast_return_value)) {
+			record_profile_call();
+			return fast_return_value;
+		}
+	}
+	if (p_argcount > 1) {
+		Variant fast_return_value;
+		if (script->_execute_fast_instance_bytecode_methodp(method, this, p_args, p_argcount, &fast_return_value)) {
+			record_profile_call();
 			return fast_return_value;
 		}
 	}
@@ -8834,6 +9148,7 @@ Variant LunariScriptInstance::callp(const StringName &p_method, const Variant **
 		HashMap<StringName, Variant> locals;
 		Variant return_value;
 		if (script->_execute_fast_bytecode_method(script->get_global_name(), method, this, &return_value, &args)) {
+			record_profile_call();
 			return return_value;
 		}
 		if (script->_execute_bytecode_method(script->get_global_name(), method, this, &locals, Ref<LunariObject>(), &return_value, &args)) {
@@ -9029,7 +9344,35 @@ void LunariScript::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("rename_symbol", "old_name", "new_name", "code"), &LunariScript::rename_symbol, DEFVAL(String()));
 	ClassDB::bind_method(D_METHOD("go_to_definition", "symbol", "code"), &LunariScript::go_to_definition, DEFVAL(String()));
 	ClassDB::bind_method(D_METHOD("hover_symbol", "symbol", "receiver_type", "code"), &LunariScript::hover_symbol, DEFVAL(StringName()), DEFVAL(String()));
+	ClassDB::bind_method(D_METHOD("get_hover_summary", "symbol", "receiver_type", "code"), &LunariScript::get_hover_summary, DEFVAL(StringName()), DEFVAL(String()));
+	ClassDB::bind_method(D_METHOD("complete_source_code", "code"), &LunariScript::complete_source_code, DEFVAL(String()));
+	ClassDB::bind_method(D_METHOD("explain_diagnostic", "message"), &LunariScript::explain_diagnostic);
+	ClassDB::bind_method(D_METHOD("get_godot_api_member_summary", "class", "member"), &LunariScript::get_godot_api_member_summary);
+	ClassDB::bind_method(D_METHOD("validate_script_path", "path"), &LunariScript::validate_script_path);
+	ClassDB::bind_method(D_METHOD("get_template_summary", "base_type"), &LunariScript::get_template_summary, DEFVAL(StringName("Node")));
+	ClassDB::bind_method(D_METHOD("validate_source_summary", "code", "path"), &LunariScript::validate_source_summary, DEFVAL(String()));
+	ClassDB::bind_method(D_METHOD("get_base_lunari_script"), &LunariScript::get_base_lunari_script);
+	ClassDB::bind_method(D_METHOD("inherits_lunari_script", "script"), &LunariScript::inherits_lunari_script);
+	ClassDB::bind_method(D_METHOD("get_parse_error_message"), &LunariScript::get_parse_error_message);
+#ifdef TOOLS_ENABLED
+	ClassDB::bind_method(D_METHOD("get_documentation_summary"), &LunariScript::get_documentation_summary);
+	ClassDB::bind_method(D_METHOD("get_documentation_index", "query", "class"), &LunariScript::get_documentation_index, DEFVAL(String()), DEFVAL(StringName()));
+#endif
+	ClassDB::bind_method(D_METHOD("collect_project_outline", "sources"), &LunariScript::collect_project_outline);
+	ClassDB::bind_method(D_METHOD("build_project_symbol_index", "sources"), &LunariScript::build_project_symbol_index);
+	ClassDB::bind_method(D_METHOD("find_project_references", "sources", "symbol"), &LunariScript::find_project_references);
+	ClassDB::bind_method(D_METHOD("rename_project_symbol", "sources", "old_name", "new_name"), &LunariScript::rename_project_symbol);
+	ClassDB::bind_method(D_METHOD("go_to_project_definition", "sources", "symbol"), &LunariScript::go_to_project_definition);
+	ClassDB::bind_method(D_METHOD("analyze_project_graph", "sources", "changed_paths"), &LunariScript::analyze_project_graph, DEFVAL(Array()));
+	ClassDB::bind_method(D_METHOD("analyze_project_readiness", "sources"), &LunariScript::analyze_project_readiness);
+	ClassDB::bind_method(D_METHOD("suggest_source_fixes", "code", "path"), &LunariScript::suggest_source_fixes, DEFVAL(String()));
+	ClassDB::bind_method(D_METHOD("apply_source_fixes", "code", "fixes"), &LunariScript::apply_source_fixes);
+	ClassDB::bind_method(D_METHOD("suggest_project_source_fixes", "sources"), &LunariScript::suggest_project_source_fixes);
+	ClassDB::bind_method(D_METHOD("apply_project_source_fixes", "sources", "fixes"), &LunariScript::apply_project_source_fixes);
 	ClassDB::bind_method(D_METHOD("debug_tokenizer_roundtrip", "code", "compressed"), &LunariScript::debug_tokenizer_roundtrip, DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("debug_language_state_probe"), &LunariScript::debug_language_state_probe);
+	ClassDB::bind_method(D_METHOD("debug_profile_state_probe"), &LunariScript::debug_profile_state_probe);
+	ClassDB::bind_method(D_METHOD("debug_placeholder_state_probe"), &LunariScript::debug_placeholder_state_probe);
 }
 
 LunariScript::LunariScript() {
@@ -9068,14 +9411,83 @@ Variant::Type LunariScript::variant_type_for_lunari_type(const StringName &p_typ
 	if (type == "Vector2") {
 		return Variant::VECTOR2;
 	}
+	if (type == "Vector2i") {
+		return Variant::VECTOR2I;
+	}
+	if (type == "Rect2") {
+		return Variant::RECT2;
+	}
+	if (type == "Rect2i") {
+		return Variant::RECT2I;
+	}
 	if (type == "Vector3") {
 		return Variant::VECTOR3;
+	}
+	if (type == "Vector3i") {
+		return Variant::VECTOR3I;
+	}
+	if (type == "Transform2D") {
+		return Variant::TRANSFORM2D;
+	}
+	if (type == "Vector4") {
+		return Variant::VECTOR4;
+	}
+	if (type == "Vector4i") {
+		return Variant::VECTOR4I;
+	}
+	if (type == "Plane") {
+		return Variant::PLANE;
+	}
+	if (type == "Quaternion") {
+		return Variant::QUATERNION;
+	}
+	if (type == "AABB") {
+		return Variant::AABB;
+	}
+	if (type == "Basis") {
+		return Variant::BASIS;
+	}
+	if (type == "Transform3D") {
+		return Variant::TRANSFORM3D;
+	}
+	if (type == "Projection") {
+		return Variant::PROJECTION;
 	}
 	if (type == "Color") {
 		return Variant::COLOR;
 	}
 	if (type == "NodePath") {
 		return Variant::NODE_PATH;
+	}
+	if (type == "RID") {
+		return Variant::RID;
+	}
+	if (type == "PackedByteArray") {
+		return Variant::PACKED_BYTE_ARRAY;
+	}
+	if (type == "PackedInt32Array") {
+		return Variant::PACKED_INT32_ARRAY;
+	}
+	if (type == "PackedInt64Array") {
+		return Variant::PACKED_INT64_ARRAY;
+	}
+	if (type == "PackedFloat32Array") {
+		return Variant::PACKED_FLOAT32_ARRAY;
+	}
+	if (type == "PackedFloat64Array") {
+		return Variant::PACKED_FLOAT64_ARRAY;
+	}
+	if (type == "PackedStringArray") {
+		return Variant::PACKED_STRING_ARRAY;
+	}
+	if (type == "PackedVector2Array") {
+		return Variant::PACKED_VECTOR2_ARRAY;
+	}
+	if (type == "PackedVector3Array") {
+		return Variant::PACKED_VECTOR3_ARRAY;
+	}
+	if (type == "PackedColorArray") {
+		return Variant::PACKED_COLOR_ARRAY;
 	}
 	if (type == "Variant" || type == "any") {
 		return Variant::NIL;
@@ -9179,6 +9591,33 @@ Variant LunariScript::_parse_literal(const String &p_value, const StringName &p_
 			return Vector3(parts[0].strip_edges().to_float(), parts[1].strip_edges().to_float(), parts[2].strip_edges().to_float());
 		}
 	}
+	Variant::Type constructor_type = _lunari_variant_constructor_type(type);
+	if (constructor_type != Variant::NIL && value.begins_with(String(type) + "(") && value.ends_with(")")) {
+		String args = value.substr(String(type).length() + 1, value.length() - String(type).length() - 2);
+		Vector<Variant> constructor_args;
+		bool args_ok = true;
+		if (!args.strip_edges().is_empty()) {
+			for (const String &part : _lunari_split_top_level(args, ',')) {
+				String argument = part.strip_edges();
+				if (argument.is_valid_int()) {
+					constructor_args.push_back(argument.to_int());
+				} else if (argument.is_valid_float()) {
+					constructor_args.push_back(argument.to_float());
+				} else if ((argument.begins_with("\"") && argument.ends_with("\"")) || (argument.begins_with("'") && argument.ends_with("'"))) {
+					constructor_args.push_back(argument.substr(1, argument.length() - 2));
+				} else if (argument == "true" || argument == "false") {
+					constructor_args.push_back(argument == "true");
+				} else {
+					args_ok = false;
+					break;
+				}
+			}
+		}
+		Variant constructed;
+		if (args_ok && _lunari_construct_builtin_variant(type, constructor_args, &constructed)) {
+			return constructed;
+		}
+	}
 	if (r_valid) {
 		*r_valid = false;
 	}
@@ -9192,6 +9631,770 @@ static const int LUNARI_FAST_EXPR_NONE = 0;
 static const int LUNARI_FAST_EXPR_INT_AFFINE = 1;
 static const int LUNARI_FAST_EXPR_STRING_PREFIX_PARAM = 2;
 static const int LUNARI_FAST_EXPR_FIELD_PROPERTY = 3;
+static const int LUNARI_FAST_EXPR_INT_ARG_SUM = 4;
+static const int LUNARI_FAST_EXPR_INT_ARRAY_LITERAL_SUM = 5;
+static const int LUNARI_FAST_EXPR_STRING_KEY_HASH_SUM = 6;
+static const int LUNARI_FAST_EXPR_INT_CONDITION = 7;
+static const int LUNARI_FAST_EXPR_FILTERED_INT_ARRAY_SUM = 8;
+static const int LUNARI_FAST_EXPR_SIGNAL_EMIT_RETURN_ARG = 9;
+static const int LUNARI_FAST_EXPR_RESOURCE_LOAD_RETURN = 10;
+
+static bool _lunari_fast_default_literal_supported(const String &p_default) {
+	String value = p_default.strip_edges();
+	if (value.is_valid_int() || value.is_valid_float() || value == "true" || value == "false" || value == "nil") {
+		return true;
+	}
+	return value.length() >= 2 && ((value.begins_with("\"") && value.ends_with("\"")) || (value.begins_with("'") && value.ends_with("'")));
+}
+
+static String _lunari_replace_identifier_outside_strings(const String &p_expression, const String &p_identifier, const String &p_replacement) {
+	if (p_identifier.is_empty()) {
+		return p_expression;
+	}
+	String result;
+	bool in_string = false;
+	char32_t quote = 0;
+	for (int i = 0; i < p_expression.length(); i++) {
+		char32_t c = p_expression[i];
+		if (in_string) {
+			result += String::chr(c);
+			if (c == '\\' && i + 1 < p_expression.length()) {
+				i++;
+				result += String::chr(p_expression[i]);
+				continue;
+			}
+			if (c == quote) {
+				in_string = false;
+			}
+			continue;
+		}
+		if (c == '"' || c == '\'') {
+			in_string = true;
+			quote = c;
+			result += String::chr(c);
+			continue;
+		}
+		if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_') {
+			const int start = i;
+			String identifier;
+			while (i < p_expression.length()) {
+				char32_t ident_char = p_expression[i];
+				if (!((ident_char >= 'A' && ident_char <= 'Z') || (ident_char >= 'a' && ident_char <= 'z') || (ident_char >= '0' && ident_char <= '9') || ident_char == '_')) {
+					break;
+				}
+				identifier += String::chr(ident_char);
+				i++;
+			}
+			i--;
+			result += identifier == p_identifier ? p_replacement : p_expression.substr(start, i - start + 1);
+			continue;
+		}
+		result += String::chr(c);
+	}
+	return result;
+}
+
+static bool _lunari_signature_supports_one_arg_fast_plan(const LunariScript::MethodSignatureInfo &p_signature) {
+	if (p_signature.parameters.is_empty()) {
+		return false;
+	}
+	for (int i = 0; i < p_signature.parameters.size(); i++) {
+		const LunariAST::Parameter &parameter = p_signature.parameters[i];
+		if (parameter.is_rest || parameter.is_keyword || parameter.is_block) {
+			return false;
+		}
+		if (i > 0 && parameter.has_default_value && !_lunari_fast_default_literal_supported(parameter.default_value)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static String _lunari_substitute_fast_default_parameters(const String &p_expression, const LunariScript::MethodSignatureInfo &p_signature) {
+	String expression = p_expression;
+	for (int i = 1; i < p_signature.parameters.size(); i++) {
+		const LunariAST::Parameter &parameter = p_signature.parameters[i];
+		expression = _lunari_replace_identifier_outside_strings(expression, String(parameter.name), parameter.default_value.strip_edges());
+	}
+	return expression;
+}
+
+static bool _lunari_compile_multi_arg_sum_expression(const String &p_expression, const Vector<LunariAST::Parameter> &p_parameters, Vector<StringName> *r_parameter_names, int64_t *r_add) {
+	ERR_FAIL_NULL_V(r_parameter_names, false);
+	ERR_FAIL_NULL_V(r_add, false);
+	r_parameter_names->clear();
+	*r_add = 0;
+	if (p_parameters.is_empty()) {
+		return false;
+	}
+	HashSet<StringName> seen;
+	for (const LunariAST::Parameter &parameter : p_parameters) {
+		if (parameter.is_rest || parameter.is_keyword || parameter.is_block || parameter.name == StringName()) {
+			return false;
+		}
+	}
+	Vector<String> add_parts = _lunari_split_top_level(p_expression.strip_edges(), '+');
+	if (add_parts.size() < 2) {
+		return false;
+	}
+	for (const String &raw_part : add_parts) {
+		String part = raw_part.strip_edges();
+		if (part.is_valid_int()) {
+			*r_add += part.to_int();
+			continue;
+		}
+		bool matched = false;
+		for (const LunariAST::Parameter &parameter : p_parameters) {
+			if (part == String(parameter.name)) {
+				if (!seen.has(parameter.name)) {
+					seen.insert(parameter.name);
+					r_parameter_names->push_back(parameter.name);
+				}
+				matched = true;
+				break;
+			}
+		}
+		if (!matched) {
+			r_parameter_names->clear();
+			*r_add = 0;
+			return false;
+		}
+	}
+	return !r_parameter_names->is_empty();
+}
+
+static bool _lunari_parse_fast_string_key_index(const String &p_expression, const String &p_target, String *r_key) {
+	ERR_FAIL_NULL_V(r_key, false);
+	String expression = p_expression.strip_edges();
+	const String prefix = p_target + "[";
+	if (!expression.begins_with(prefix) || !expression.ends_with("]")) {
+		return false;
+	}
+	String key_expression = expression.substr(prefix.length(), expression.length() - prefix.length() - 1).strip_edges();
+	if (!key_expression.begins_with("\"") || !key_expression.ends_with("\"")) {
+		return false;
+	}
+	*r_key = key_expression.substr(1, key_expression.length() - 2);
+	return true;
+}
+
+static bool _lunari_compile_fast_array_literal_sum_plan(const Vector<const LunariBytecode::Instruction *> &p_ops, const LunariScript::MethodSignatureInfo &p_signature, LunariScript::FastBytecodeMethodPlan *r_plan) {
+	ERR_FAIL_NULL_V(r_plan, false);
+	if (p_signature.parameters.size() != 1 || p_ops.size() != 6) {
+		return false;
+	}
+	const LunariBytecode::Instruction *ArrayAssign = p_ops[0];
+	const LunariBytecode::Instruction *TotalAssign = p_ops[1];
+	const LunariBytecode::Instruction *IterBegin = p_ops[2];
+	const LunariBytecode::Instruction *LoopAssign = p_ops[3];
+	const LunariBytecode::Instruction *IterNext = p_ops[4];
+	const LunariBytecode::Instruction *Return = p_ops[5];
+	if (ArrayAssign->opcode != LunariBytecode::OP_LOCAL_ASSIGN || TotalAssign->opcode != LunariBytecode::OP_LOCAL_ASSIGN ||
+			IterBegin->opcode != LunariBytecode::OP_ITER_BEGIN || LoopAssign->opcode != LunariBytecode::OP_ASSIGN ||
+			IterNext->opcode != LunariBytecode::OP_ITER_NEXT || Return->opcode != LunariBytecode::OP_RETURN) {
+		return false;
+	}
+	const String array_name = ArrayAssign->operand_a.strip_edges();
+	const String total_name = TotalAssign->operand_a.strip_edges();
+	const String iterator_name = IterBegin->operand_a.strip_edges();
+	const String parameter_name = String(p_signature.parameters[0].name);
+	if (array_name.is_empty() || total_name.is_empty() || iterator_name.is_empty() ||
+			IterBegin->operand_b.strip_edges() != array_name || IterNext->operand_a.strip_edges() != iterator_name ||
+			LoopAssign->operand_a.strip_edges() != total_name || Return->operand_a.strip_edges() != total_name ||
+			TotalAssign->operand_c.strip_edges() != "0") {
+		return false;
+	}
+	Vector<String> sum_terms = _lunari_split_top_level(LoopAssign->operand_b, '+');
+	if (sum_terms.size() != 2 || sum_terms[0].strip_edges() != total_name || sum_terms[1].strip_edges() != iterator_name) {
+		return false;
+	}
+	String literal = ArrayAssign->operand_c.strip_edges();
+	if (!literal.begins_with("[") || !literal.ends_with("]")) {
+		return false;
+	}
+	literal = literal.substr(1, literal.length() - 2).strip_edges();
+	int64_t constant_total = 0;
+	bool saw_parameter = false;
+	if (!literal.is_empty()) {
+		for (const String &raw_part : _lunari_split_top_level(literal, ',')) {
+			String part = raw_part.strip_edges();
+			if (part == parameter_name) {
+				if (saw_parameter) {
+					return false;
+				}
+				saw_parameter = true;
+			} else if (part.is_valid_int()) {
+				constant_total += part.to_int();
+			} else {
+				return false;
+			}
+		}
+	}
+	if (!saw_parameter) {
+		return false;
+	}
+	r_plan->supported = true;
+	r_plan->first_expression_kind = LUNARI_FAST_EXPR_INT_ARRAY_LITERAL_SUM;
+	r_plan->first_add = constant_total;
+	return true;
+}
+
+static bool _lunari_fast_int_compare(int64_t p_left, const String &p_operator, int64_t p_right) {
+	if (p_operator == ">") {
+		return p_left > p_right;
+	}
+	if (p_operator == "<") {
+		return p_left < p_right;
+	}
+	if (p_operator == ">=") {
+		return p_left >= p_right;
+	}
+	if (p_operator == "<=") {
+		return p_left <= p_right;
+	}
+	if (p_operator == "==") {
+		return p_left == p_right;
+	}
+	return false;
+}
+
+static bool _lunari_compile_fast_filtered_array_sum_plan(const Vector<const LunariBytecode::Instruction *> &p_ops, const LunariScript::MethodSignatureInfo &p_signature, LunariScript::FastBytecodeMethodPlan *r_plan) {
+	ERR_FAIL_NULL_V(r_plan, false);
+	if (p_signature.parameters.size() != 1 || p_ops.size() != 7) {
+		return false;
+	}
+	const LunariBytecode::Instruction *ArrayAssign = p_ops[0];
+	const LunariBytecode::Instruction *TotalAssign = p_ops[1];
+	const LunariBytecode::Instruction *IterBegin = p_ops[2];
+	const LunariBytecode::Instruction *Jump = p_ops[3];
+	const LunariBytecode::Instruction *LoopAssign = p_ops[4];
+	const LunariBytecode::Instruction *IterNext = p_ops[5];
+	const LunariBytecode::Instruction *Return = p_ops[6];
+	if (ArrayAssign->opcode != LunariBytecode::OP_LOCAL_ASSIGN || TotalAssign->opcode != LunariBytecode::OP_LOCAL_ASSIGN ||
+			IterBegin->opcode != LunariBytecode::OP_ITER_BEGIN || Jump->opcode != LunariBytecode::OP_JUMP_IF_FALSE ||
+			LoopAssign->opcode != LunariBytecode::OP_ASSIGN || IterNext->opcode != LunariBytecode::OP_ITER_NEXT ||
+			Return->opcode != LunariBytecode::OP_RETURN) {
+		return false;
+	}
+	const String array_name = ArrayAssign->operand_a.strip_edges();
+	const String total_name = TotalAssign->operand_a.strip_edges();
+	const String iterator_name = IterBegin->operand_a.strip_edges();
+	const String parameter_name = String(p_signature.parameters[0].name);
+	if (array_name.is_empty() || total_name.is_empty() || iterator_name.is_empty() ||
+			IterBegin->operand_b.strip_edges() != array_name || IterNext->operand_a.strip_edges() != iterator_name ||
+			LoopAssign->operand_a.strip_edges() != total_name || Return->operand_a.strip_edges() != total_name ||
+			TotalAssign->operand_c.strip_edges() != "0") {
+		return false;
+	}
+	Vector<String> sum_terms = _lunari_split_top_level(LoopAssign->operand_b, '+');
+	if (sum_terms.size() != 2 || sum_terms[0].strip_edges() != total_name || sum_terms[1].strip_edges() != iterator_name) {
+		return false;
+	}
+	String condition = Jump->operand_a.strip_edges();
+	String condition_operator;
+	int op_index = -1;
+	for (const String &candidate : { String(">="), String("<="), String("=="), String(">"), String("<") }) {
+		int found = condition.find(candidate);
+		if (found > 0) {
+			condition_operator = candidate;
+			op_index = found;
+			break;
+		}
+	}
+	if (op_index <= 0) {
+		return false;
+	}
+	String lhs = condition.substr(0, op_index).strip_edges();
+	String rhs = condition.substr(op_index + condition_operator.length()).strip_edges();
+	if (lhs != iterator_name || !rhs.is_valid_int()) {
+		return false;
+	}
+	const int64_t threshold = rhs.to_int();
+	String literal = ArrayAssign->operand_c.strip_edges();
+	if (!literal.begins_with("[") || !literal.ends_with("]")) {
+		return false;
+	}
+	literal = literal.substr(1, literal.length() - 2).strip_edges();
+	int64_t constant_total = 0;
+	bool saw_parameter = false;
+	if (!literal.is_empty()) {
+		for (const String &raw_part : _lunari_split_top_level(literal, ',')) {
+			String part = raw_part.strip_edges();
+			if (part == parameter_name) {
+				if (saw_parameter) {
+					return false;
+				}
+				saw_parameter = true;
+			} else if (part.is_valid_int()) {
+				const int64_t value = part.to_int();
+				if (_lunari_fast_int_compare(value, condition_operator, threshold)) {
+					constant_total += value;
+				}
+			} else {
+				return false;
+			}
+		}
+	}
+	if (!saw_parameter) {
+		return false;
+	}
+	r_plan->supported = true;
+	r_plan->first_expression_kind = LUNARI_FAST_EXPR_FILTERED_INT_ARRAY_SUM;
+	r_plan->first_add = constant_total;
+	r_plan->condition_operator = condition_operator;
+	r_plan->condition_rhs = threshold;
+	return true;
+}
+
+static bool _lunari_compile_fast_string_key_hash_sum_plan(const Vector<const LunariBytecode::Instruction *> &p_ops, const LunariScript::MethodSignatureInfo &p_signature, LunariScript::FastBytecodeMethodPlan *r_plan) {
+	ERR_FAIL_NULL_V(r_plan, false);
+	if (p_signature.parameters.size() != 1 || p_ops.size() != 3) {
+		return false;
+	}
+	const LunariBytecode::Instruction *HashAssign = p_ops[0];
+	const LunariBytecode::Instruction *IndexedAssign = p_ops[1];
+	const LunariBytecode::Instruction *Return = p_ops[2];
+	if (HashAssign->opcode != LunariBytecode::OP_LOCAL_ASSIGN || IndexedAssign->opcode != LunariBytecode::OP_CALL || Return->opcode != LunariBytecode::OP_RETURN) {
+		return false;
+	}
+	const String hash_name = HashAssign->operand_a.strip_edges();
+	const String parameter_name = String(p_signature.parameters[0].name);
+	String literal = HashAssign->operand_c.strip_edges();
+	if (hash_name.is_empty() || !literal.begins_with("{") || !literal.ends_with("}")) {
+		return false;
+	}
+	HashMap<String, int64_t> constant_values;
+	String parameter_key;
+	literal = literal.substr(1, literal.length() - 2).strip_edges();
+	if (!literal.is_empty()) {
+		for (const String &raw_entry : _lunari_split_top_level(literal, ',')) {
+			String entry = raw_entry.strip_edges();
+			int separator = entry.find("=>");
+			if (separator < 0) {
+				return false;
+			}
+			String key = entry.substr(0, separator).strip_edges();
+			String value = entry.substr(separator + 2).strip_edges();
+			if (!key.begins_with("\"") || !key.ends_with("\"")) {
+				return false;
+			}
+			key = key.substr(1, key.length() - 2);
+			if (value == parameter_name) {
+				if (!parameter_key.is_empty()) {
+					return false;
+				}
+				parameter_key = key;
+			} else if (value.is_valid_int()) {
+				constant_values[key] = value.to_int();
+			} else {
+				return false;
+			}
+		}
+	}
+	if (parameter_key.is_empty()) {
+		return false;
+	}
+
+	String assignment = IndexedAssign->operand_a.strip_edges();
+	int equals = assignment.find("=");
+	if (equals <= 0) {
+		return false;
+	}
+	String lhs = assignment.substr(0, equals).strip_edges();
+	String rhs = assignment.substr(equals + 1).strip_edges();
+	String assigned_key;
+	if (!_lunari_parse_fast_string_key_index(lhs, hash_name, &assigned_key)) {
+		return false;
+	}
+	Vector<String> mutation_terms = _lunari_split_top_level(rhs, '+');
+	if (mutation_terms.size() != 2) {
+		return false;
+	}
+	String mutation_key;
+	String mutation_add_term = mutation_terms[1].strip_edges();
+	if (!_lunari_parse_fast_string_key_index(mutation_terms[0], hash_name, &mutation_key) || mutation_key != assigned_key || !mutation_add_term.is_valid_int()) {
+		return false;
+	}
+	const int64_t mutation_add = mutation_add_term.to_int();
+
+	Vector<String> return_terms = _lunari_split_top_level(Return->operand_a, '+');
+	if (return_terms.is_empty()) {
+		return false;
+	}
+	int parameter_terms = 0;
+	int64_t constant_total = 0;
+	for (const String &raw_term : return_terms) {
+		String key;
+		if (!_lunari_parse_fast_string_key_index(raw_term, hash_name, &key)) {
+			return false;
+		}
+		if (key == parameter_key) {
+			parameter_terms++;
+			if (key == assigned_key) {
+				constant_total += mutation_add;
+			}
+		} else {
+			HashMap<String, int64_t>::Iterator Constant = constant_values.find(key);
+			if (!Constant) {
+				return false;
+			}
+			int64_t value = Constant->value;
+			if (key == assigned_key) {
+				value += mutation_add;
+			}
+			constant_total += value;
+		}
+	}
+	if (parameter_terms != 1) {
+		return false;
+	}
+	r_plan->supported = true;
+	r_plan->first_expression_kind = LUNARI_FAST_EXPR_STRING_KEY_HASH_SUM;
+	r_plan->first_add = constant_total;
+	return true;
+}
+
+static bool _lunari_compile_fast_affine_int_expression(const String &p_expression, const String &p_parameter_name, const HashMap<String, int64_t> &p_local_mul, const HashMap<String, int64_t> &p_local_add, int64_t *r_mul, int64_t *r_add) {
+	ERR_FAIL_NULL_V(r_mul, false);
+	ERR_FAIL_NULL_V(r_add, false);
+	*r_mul = 0;
+	*r_add = 0;
+	Vector<String> add_parts = _lunari_split_top_level(p_expression.strip_edges(), '+');
+	if (add_parts.is_empty()) {
+		return false;
+	}
+	for (const String &raw_add_part : add_parts) {
+		Vector<String> mul_parts = _lunari_split_top_level(raw_add_part, '*');
+		int64_t constant_factor = 1;
+		bool has_affine_factor = false;
+		int64_t affine_mul = 0;
+		int64_t affine_add = 0;
+		for (const String &raw_mul_part : mul_parts) {
+			String part = raw_mul_part.strip_edges();
+			if (part.is_valid_int()) {
+				constant_factor *= part.to_int();
+				continue;
+			}
+			int64_t part_mul = 0;
+			int64_t part_add = 0;
+			if (part == p_parameter_name) {
+				part_mul = 1;
+			} else {
+				HashMap<String, int64_t>::ConstIterator LocalMul = p_local_mul.find(part);
+				HashMap<String, int64_t>::ConstIterator LocalAdd = p_local_add.find(part);
+				if (!LocalMul || !LocalAdd) {
+					return false;
+				}
+				part_mul = LocalMul->value;
+				part_add = LocalAdd->value;
+			}
+			if (has_affine_factor) {
+				return false;
+			}
+			has_affine_factor = true;
+			affine_mul = part_mul;
+			affine_add = part_add;
+		}
+		if (has_affine_factor) {
+			*r_mul += affine_mul * constant_factor;
+			*r_add += affine_add * constant_factor;
+		} else {
+			*r_add += constant_factor;
+		}
+	}
+	return true;
+}
+
+static bool _lunari_compile_fast_local_int_return_plan(const Vector<const LunariBytecode::Instruction *> &p_ops, const LunariScript::MethodSignatureInfo &p_signature, LunariScript::FastBytecodeMethodPlan *r_plan) {
+	ERR_FAIL_NULL_V(r_plan, false);
+	if (p_signature.parameters.size() != 1 || p_ops.size() < 2 || p_ops[p_ops.size() - 1]->opcode != LunariBytecode::OP_RETURN) {
+		return false;
+	}
+	const String parameter_name = String(p_signature.parameters[0].name);
+	HashMap<String, int64_t> local_mul;
+	HashMap<String, int64_t> local_add;
+	for (int i = 0; i < p_ops.size() - 1; i++) {
+		const LunariBytecode::Instruction *instruction = p_ops[i];
+		if (instruction->opcode != LunariBytecode::OP_LOCAL_ASSIGN || instruction->operand_a.strip_edges().is_empty()) {
+			return false;
+		}
+		int64_t mul = 0;
+		int64_t add = 0;
+		if (!_lunari_compile_fast_affine_int_expression(instruction->operand_c, parameter_name, local_mul, local_add, &mul, &add)) {
+			return false;
+		}
+		local_mul[instruction->operand_a.strip_edges()] = mul;
+		local_add[instruction->operand_a.strip_edges()] = add;
+	}
+	int64_t return_mul = 0;
+	int64_t return_add = 0;
+	if (!_lunari_compile_fast_affine_int_expression(p_ops[p_ops.size() - 1]->operand_a, parameter_name, local_mul, local_add, &return_mul, &return_add)) {
+		return false;
+	}
+	r_plan->supported = true;
+	r_plan->first_expression_kind = LUNARI_FAST_EXPR_INT_AFFINE;
+	r_plan->first_mul = return_mul;
+	r_plan->first_add = return_add;
+	return true;
+}
+
+static Vector<String> _lunari_split_fast_logical_and(const String &p_expression) {
+	Vector<String> parts;
+	String expression = p_expression.strip_edges();
+	int start = 0;
+	int depth = 0;
+	bool in_string = false;
+	char32_t quote = 0;
+	for (int i = 0; i < expression.length(); i++) {
+		char32_t c = expression[i];
+		if (in_string) {
+			if (c == '\\' && i + 1 < expression.length()) {
+				i++;
+				continue;
+			}
+			if (c == quote) {
+				in_string = false;
+			}
+			continue;
+		}
+		if (c == '"' || c == '\'') {
+			in_string = true;
+			quote = c;
+			continue;
+		}
+		if (c == '(' || c == '[' || c == '{') {
+			depth++;
+			continue;
+		}
+		if (c == ')' || c == ']' || c == '}') {
+			depth--;
+			continue;
+		}
+		if (depth == 0 && i + 1 < expression.length() && expression[i] == '&' && expression[i + 1] == '&') {
+			parts.push_back(expression.substr(start, i - start).strip_edges());
+			i++;
+			start = i + 1;
+		}
+	}
+	parts.push_back(expression.substr(start).strip_edges());
+	return parts;
+}
+
+static bool _lunari_parse_fast_hash_int_literal(const String &p_literal, const String &p_parameter_name, Dictionary *r_values) {
+	ERR_FAIL_NULL_V(r_values, false);
+	String literal = p_literal.strip_edges();
+	if (!literal.begins_with("{") || !literal.ends_with("}")) {
+		return false;
+	}
+	literal = literal.substr(1, literal.length() - 2).strip_edges();
+	if (literal.is_empty()) {
+		return true;
+	}
+	for (const String &raw_entry : _lunari_split_top_level(literal, ',')) {
+		String entry = raw_entry.strip_edges();
+		int separator = entry.find("=>");
+		if (separator < 0) {
+			return false;
+		}
+		String key = entry.substr(0, separator).strip_edges();
+		String value = entry.substr(separator + 2).strip_edges();
+		if (!key.begins_with("\"") || !key.ends_with("\"") || !value.is_valid_int()) {
+			return false;
+		}
+		if (value == p_parameter_name) {
+			return false;
+		}
+		(*r_values)[key.substr(1, key.length() - 2)] = value.to_int();
+	}
+	return true;
+}
+
+static bool _lunari_compile_fast_event_condition_plan(const Vector<const LunariBytecode::Instruction *> &p_ops, const LunariScript::MethodSignatureInfo &p_signature, LunariScript::FastBytecodeMethodPlan *r_plan) {
+	ERR_FAIL_NULL_V(r_plan, false);
+	if (p_signature.parameters.size() != 1 || p_ops.size() < 4) {
+		return false;
+	}
+	const int jump_index = p_ops.size() - 3;
+	const LunariBytecode::Instruction *Jump = p_ops[jump_index];
+	const LunariBytecode::Instruction *TrueReturn = p_ops[p_ops.size() - 2];
+	const LunariBytecode::Instruction *FalseReturn = p_ops[p_ops.size() - 1];
+	if (Jump->opcode != LunariBytecode::OP_JUMP_IF_FALSE || TrueReturn->opcode != LunariBytecode::OP_RETURN || FalseReturn->opcode != LunariBytecode::OP_RETURN ||
+			!TrueReturn->operand_a.strip_edges().is_valid_int() || !FalseReturn->operand_a.strip_edges().is_valid_int()) {
+		return false;
+	}
+	const String parameter_name = String(p_signature.parameters[0].name);
+	HashMap<String, int64_t> local_mul;
+	HashMap<String, int64_t> local_add;
+	HashMap<String, Dictionary> hash_values;
+	for (int i = 0; i < jump_index; i++) {
+		const LunariBytecode::Instruction *instruction = p_ops[i];
+		if (instruction->opcode != LunariBytecode::OP_LOCAL_ASSIGN || instruction->operand_a.strip_edges().is_empty()) {
+			return false;
+		}
+		Dictionary hash_literal;
+		if (_lunari_parse_fast_hash_int_literal(instruction->operand_c, parameter_name, &hash_literal)) {
+			hash_values[instruction->operand_a.strip_edges()] = hash_literal;
+			continue;
+		}
+		int64_t mul = 0;
+		int64_t add = 0;
+		if (!_lunari_compile_fast_affine_int_expression(instruction->operand_c, parameter_name, local_mul, local_add, &mul, &add)) {
+			return false;
+		}
+		local_mul[instruction->operand_a.strip_edges()] = mul;
+		local_add[instruction->operand_a.strip_edges()] = add;
+	}
+	bool has_dynamic_condition = false;
+	int64_t condition_mul = 0;
+	int64_t condition_add = 0;
+	int64_t condition_rhs = 0;
+	String condition_operator;
+	for (const String &raw_part : _lunari_split_fast_logical_and(Jump->operand_a)) {
+		String part = raw_part.strip_edges();
+		String op;
+		int op_index = -1;
+		for (const String &candidate : { String(">="), String("<="), String("=="), String(">"), String("<") }) {
+			int found = part.find(candidate);
+			if (found > 0) {
+				op = candidate;
+				op_index = found;
+				break;
+			}
+		}
+		if (op_index <= 0) {
+			return false;
+		}
+		String lhs = part.substr(0, op_index).strip_edges();
+		String rhs = part.substr(op_index + op.length()).strip_edges();
+		if (!rhs.is_valid_int()) {
+			return false;
+		}
+		String hash_name;
+		String hash_key;
+		int bracket_open = lhs.find("[");
+		if (bracket_open > 0 && _lunari_parse_fast_string_key_index(lhs, lhs.substr(0, bracket_open).strip_edges(), &hash_key)) {
+			hash_name = lhs.substr(0, bracket_open).strip_edges();
+			HashMap<String, Dictionary>::Iterator HashValues = hash_values.find(hash_name);
+			if (!HashValues || !HashValues->value.has(hash_key)) {
+				return false;
+			}
+			const int64_t left_value = int64_t(HashValues->value[hash_key]);
+			const int64_t right_value = rhs.to_int();
+			bool constant_result = false;
+			if (op == "==") {
+				constant_result = left_value == right_value;
+			} else if (op == ">") {
+				constant_result = left_value > right_value;
+			} else if (op == "<") {
+				constant_result = left_value < right_value;
+			} else if (op == ">=") {
+				constant_result = left_value >= right_value;
+			} else if (op == "<=") {
+				constant_result = left_value <= right_value;
+			}
+			if (!constant_result) {
+				r_plan->supported = true;
+				r_plan->first_expression_kind = LUNARI_FAST_EXPR_INT_AFFINE;
+				r_plan->first_mul = 0;
+				r_plan->first_add = FalseReturn->operand_a.strip_edges().to_int();
+				return true;
+			}
+			continue;
+		}
+		if (has_dynamic_condition) {
+			return false;
+		}
+		if (!_lunari_compile_fast_affine_int_expression(lhs, parameter_name, local_mul, local_add, &condition_mul, &condition_add)) {
+			return false;
+		}
+		condition_rhs = rhs.to_int();
+		condition_operator = op;
+		has_dynamic_condition = true;
+	}
+	if (!has_dynamic_condition) {
+		r_plan->supported = true;
+		r_plan->first_expression_kind = LUNARI_FAST_EXPR_INT_AFFINE;
+		r_plan->first_mul = 0;
+		r_plan->first_add = TrueReturn->operand_a.strip_edges().to_int();
+		return true;
+	}
+	r_plan->supported = true;
+	r_plan->first_expression_kind = LUNARI_FAST_EXPR_INT_CONDITION;
+	r_plan->condition_mul = condition_mul;
+	r_plan->condition_add = condition_add;
+	r_plan->condition_rhs = condition_rhs;
+	r_plan->condition_operator = condition_operator;
+	r_plan->condition_true_value = TrueReturn->operand_a.strip_edges().to_int();
+	r_plan->condition_false_value = FalseReturn->operand_a.strip_edges().to_int();
+	return true;
+}
+
+static bool _lunari_parse_fast_single_string_call_arg(const String &p_expression, const String &p_call, String *r_value) {
+	ERR_FAIL_NULL_V(r_value, false);
+	String expression = p_expression.strip_edges();
+	const String prefix = p_call + "(";
+	if (!expression.begins_with(prefix) || !expression.ends_with(")")) {
+		return false;
+	}
+	String arg = expression.substr(prefix.length(), expression.length() - prefix.length() - 1).strip_edges();
+	if (!arg.begins_with("\"") || !arg.ends_with("\"")) {
+		return false;
+	}
+	*r_value = arg.substr(1, arg.length() - 2);
+	return true;
+}
+
+static bool _lunari_compile_fast_signal_emit_return_plan(const Vector<const LunariBytecode::Instruction *> &p_ops, const LunariScript::MethodSignatureInfo &p_signature, LunariScript::FastBytecodeMethodPlan *r_plan) {
+	ERR_FAIL_NULL_V(r_plan, false);
+	if (p_signature.parameters.size() != 1 || p_ops.size() != 2 || p_ops[0]->opcode != LunariBytecode::OP_CALL || p_ops[1]->opcode != LunariBytecode::OP_RETURN) {
+		return false;
+	}
+	const String parameter_name = String(p_signature.parameters[0].name);
+	if (p_ops[1]->operand_a.strip_edges() != parameter_name) {
+		return false;
+	}
+	String signal_name;
+	if (!_lunari_parse_fast_single_string_call_arg(p_ops[0]->operand_a, "emit_signal", &signal_name)) {
+		return false;
+	}
+	r_plan->supported = true;
+	r_plan->first_expression_kind = LUNARI_FAST_EXPR_SIGNAL_EMIT_RETURN_ARG;
+	r_plan->first_string_prefix = signal_name;
+	return true;
+}
+
+static bool _lunari_compile_fast_resource_load_return_plan(const Vector<const LunariBytecode::Instruction *> &p_ops, const LunariScript::MethodSignatureInfo &p_signature, LunariScript::FastBytecodeMethodPlan *r_plan) {
+	ERR_FAIL_NULL_V(r_plan, false);
+	if (p_signature.parameters.size() != 1 || p_ops.size() != 4) {
+		return false;
+	}
+	const LunariBytecode::Instruction *LoadAssign = p_ops[0];
+	const LunariBytecode::Instruction *Jump = p_ops[1];
+	const LunariBytecode::Instruction *TrueReturn = p_ops[2];
+	const LunariBytecode::Instruction *FalseReturn = p_ops[3];
+	if (LoadAssign->opcode != LunariBytecode::OP_LOCAL_ASSIGN || Jump->opcode != LunariBytecode::OP_JUMP_IF_FALSE ||
+			TrueReturn->opcode != LunariBytecode::OP_RETURN || FalseReturn->opcode != LunariBytecode::OP_RETURN) {
+		return false;
+	}
+	const String local_name = LoadAssign->operand_a.strip_edges();
+	const String parameter_name = String(p_signature.parameters[0].name);
+	String resource_path;
+	if (local_name.is_empty() || !_lunari_parse_fast_single_string_call_arg(LoadAssign->operand_c, "load", &resource_path)) {
+		return false;
+	}
+	if (Jump->operand_a.strip_edges() != local_name + " != nil" || FalseReturn->operand_a.strip_edges() != parameter_name) {
+		return false;
+	}
+	Vector<String> true_terms = _lunari_split_top_level(TrueReturn->operand_a, '+');
+	if (true_terms.size() != 2 || true_terms[0].strip_edges() != parameter_name || !true_terms[1].strip_edges().is_valid_int()) {
+		return false;
+	}
+	r_plan->supported = true;
+	r_plan->first_expression_kind = LUNARI_FAST_EXPR_RESOURCE_LOAD_RETURN;
+	r_plan->first_string_prefix = resource_path;
+	r_plan->first_add = true_terms[1].strip_edges().to_int();
+	return true;
+}
 
 static void _lunari_compile_one_arg_fast_expression(const String &p_expression, const String &p_param_name, int *r_kind, int64_t *r_mul, int64_t *r_add, String *r_prefix, String *r_field, String *r_property) {
 	ERR_FAIL_NULL(r_kind);
@@ -9318,6 +10521,7 @@ void LunariScript::_parse() {
 	methods.clear();
 	method_names.clear();
 	signals.clear();
+	rpc_config.clear();
 	user_classes.clear();
 	method_signatures.clear();
 	fast_bytecode_method_plans.clear();
@@ -9328,6 +10532,7 @@ void LunariScript::_parse() {
 	bytecode_compiled = false;
 	diagnostics.clear();
 	tool_script = false;
+	abstract_script = false;
 
 	HashSet<String> required_paths;
 	String expanded_requires = _lunari_expand_required_sources(source, get_path(), required_paths);
@@ -9359,6 +10564,12 @@ void LunariScript::_parse() {
 	diagnostics = analysis.diagnostics;
 	tool_script = analysis.is_tool;
 	signals = analysis.signals;
+	for (const LunariAST::Node &node : signature_document.children) {
+		if (node.kind == LunariAST::Node::NODE_CLASS && node.name == class_name && node.is_abstract) {
+			abstract_script = true;
+			break;
+		}
+	}
 
 	for (const LunariAnalyzer::Field &analyzed_field : analysis.fields) {
 		FieldInfo field;
@@ -9389,6 +10600,11 @@ void LunariScript::_parse() {
 		}
 		methods.push_back(method);
 		method_names.insert(method.name);
+		for (const String &annotation : analyzed_method.annotations) {
+			if (_lunari_script_annotation_name(annotation) == "rpc") {
+				rpc_config[method.name] = _lunari_script_rpc_config_from_annotation(annotation);
+			}
+		}
 	}
 
 	for (const String &raw_line : lines) {
@@ -9830,11 +11046,108 @@ void LunariScript::_parse() {
 
 bool LunariScript::can_instantiate() const {
 	const_cast<LunariScript *>(this)->_parse();
-	return parse_error.is_empty();
+	return parse_error.is_empty() && !abstract_script;
 }
 
 Ref<Script> LunariScript::get_base_script() const {
+	const_cast<LunariScript *>(this)->_parse();
+	if (!parse_error.is_empty() || class_name == StringName()) {
+		return Ref<Script>();
+	}
+	HashMap<StringName, UserClassInfo>::ConstIterator Class = user_classes.find(class_name);
+	StringName base_class;
+	if (Class) {
+		base_class = Class->value.base;
+	}
+	LunariParser parser;
+	LunariAST::Document document = parser.parse_ast(source);
+	for (const LunariAST::Node &node : document.children) {
+		if (node.kind == LunariAST::Node::NODE_CLASS && node.base != StringName()) {
+			if (base_class == StringName() || ClassDB::class_exists(base_class) || !Class) {
+				base_class = node.base;
+				break;
+			}
+		}
+	}
+	if (base_class == StringName() || ClassDB::class_exists(base_class)) {
+		return Ref<Script>();
+	}
+
+	HashSet<String> seen;
+	List<String> dependencies;
+	_lunari_collect_required_script_paths(source, get_path(), seen, &dependencies, false);
+
+	Vector<String> candidate_paths;
+	for (const String &dependency_path : dependencies) {
+		if (!dependency_path.ends_with(".lu")) {
+			continue;
+		}
+		candidate_paths.push_back(dependency_path);
+	}
+	if (!get_path().is_empty()) {
+		const String base_dir = get_path().get_base_dir();
+		if (!base_dir.is_empty()) {
+			Ref<DirAccess> dir = DirAccess::open(base_dir);
+			if (dir.is_valid()) {
+				dir->list_dir_begin();
+				while (true) {
+					String file_name = dir->get_next();
+					if (file_name.is_empty()) {
+						break;
+					}
+					if (dir->current_is_dir() || !file_name.ends_with(".lu")) {
+						continue;
+					}
+					String sibling_path = base_dir.path_join(file_name);
+					if (sibling_path == get_path()) {
+						continue;
+					}
+					bool already_present = false;
+					for (const String &candidate_path : candidate_paths) {
+						if (candidate_path == sibling_path) {
+							already_present = true;
+							break;
+						}
+					}
+					if (!already_present) {
+						candidate_paths.push_back(sibling_path);
+					}
+				}
+				dir->list_dir_end();
+			}
+		}
+	}
+
+	for (const String &dependency_path : candidate_paths) {
+		Error err = OK;
+		String dependency_source = FileAccess::get_file_as_string(dependency_path, &err);
+		if (err != OK) {
+			continue;
+		}
+		Ref<LunariScript> dependency_lunari;
+		Ref<Resource> cached_dependency = ResourceCache::get_ref(dependency_path);
+		if (cached_dependency.is_valid()) {
+			dependency_lunari = cached_dependency;
+		}
+		if (dependency_lunari.is_null()) {
+			dependency_lunari.instantiate();
+			dependency_lunari->set_path(dependency_path);
+		}
+		if (dependency_lunari->get_source_code() != dependency_source) {
+			dependency_lunari->set_source_code(dependency_source);
+		}
+		if (dependency_lunari->reload() != OK) {
+			continue;
+		}
+		if (dependency_lunari->class_name == base_class || dependency_lunari->has_user_class(base_class)) {
+			return dependency_lunari;
+		}
+	}
 	return Ref<Script>();
+}
+
+Ref<Script> LunariScript::get_base_lunari_script() const {
+	return get_base_script();
 }
 
 StringName LunariScript::get_global_name() const {
@@ -9843,7 +11156,61 @@ StringName LunariScript::get_global_name() const {
 }
 
 bool LunariScript::inherits_script(const Ref<Script> &p_script) const {
+	if (p_script.is_null()) {
+		return false;
+	}
+	if (p_script.ptr() == this) {
+		return true;
+	}
+	LunariScript *base_lunari = Object::cast_to<LunariScript>(p_script.ptr());
+	if (!base_lunari) {
+		return false;
+	}
+	const_cast<LunariScript *>(this)->_parse();
+	base_lunari->_parse();
+	if (!parse_error.is_empty() || !base_lunari->parse_error.is_empty()) {
+		return false;
+	}
+	StringName target_class = base_lunari->class_name;
+	if ((target_class == StringName() || target_class == StringName("LunariScript")) && !base_lunari->user_classes.is_empty()) {
+		for (const KeyValue<StringName, UserClassInfo> &user_class : base_lunari->user_classes) {
+			target_class = user_class.key;
+			break;
+		}
+	}
+	if (target_class == StringName()) {
+		return false;
+	}
+	StringName current_class = class_name;
+	if ((current_class == StringName() || current_class == StringName("LunariScript")) && !user_classes.is_empty()) {
+		for (const KeyValue<StringName, UserClassInfo> &user_class : user_classes) {
+			current_class = user_class.key;
+			break;
+		}
+	}
+	if (current_class == target_class) {
+		return true;
+	}
+	for (int guard = 0; guard < 64 && current_class != StringName(); guard++) {
+		HashMap<StringName, UserClassInfo>::ConstIterator Class = user_classes.find(current_class);
+		if (!Class) {
+			return false;
+		}
+		current_class = Class->value.base;
+		if (current_class == target_class) {
+			return true;
+		}
+	}
 	return false;
+}
+
+bool LunariScript::inherits_lunari_script(const Ref<Script> &p_script) const {
+	return inherits_script(p_script);
+}
+
+String LunariScript::get_parse_error_message() const {
+	const_cast<LunariScript *>(this)->_parse();
+	return parse_error;
 }
 
 StringName LunariScript::get_instance_base_type() const {
@@ -9857,8 +11224,48 @@ ScriptInstance *LunariScript::instance_create(Object *p_this) {
 	return memnew(LunariScriptInstance(Ref<LunariScript>(this), p_this));
 }
 
+void LunariScript::_update_placeholder_exports(PlaceHolderScriptInstance *p_placeholder) {
+#ifdef TOOLS_ENABLED
+	_parse();
+	if (!parse_error.is_empty()) {
+		return;
+	}
+
+	List<PropertyInfo> properties;
+	get_script_property_list(&properties);
+	HashMap<StringName, Variant> values;
+	for (const FieldInfo &field : fields) {
+		Variant default_value;
+		const StringName editor_name = _lunari_editor_property_name(field.name);
+		if (get_property_default_value(editor_name, default_value)) {
+			values[editor_name] = default_value;
+		}
+	}
+
+	if (p_placeholder) {
+		p_placeholder->update(properties, values);
+		return;
+	}
+
+	for (PlaceHolderScriptInstance *placeholder : placeholders) {
+		if (placeholder) {
+			placeholder->update(properties, values);
+		}
+	}
+#endif
+}
+
+void LunariScript::_placeholder_erased(PlaceHolderScriptInstance *p_placeholder) {
+#ifdef TOOLS_ENABLED
+	placeholders.erase(p_placeholder);
+#endif
+}
+
 PlaceHolderScriptInstance *LunariScript::placeholder_instance_create(Object *p_this) {
-	return memnew(PlaceHolderScriptInstance(LunariLanguage::get_singleton(), Ref<Script>(this), p_this));
+	PlaceHolderScriptInstance *placeholder = memnew(PlaceHolderScriptInstance(LunariLanguage::get_singleton(), Ref<Script>(this), p_this));
+	placeholders.insert(placeholder);
+	_update_placeholder_exports(placeholder);
+	return placeholder;
 }
 
 bool LunariScript::instance_has(const Object *p_this) const {
@@ -9912,6 +11319,9 @@ Error LunariScript::reload(bool p_keep_state) {
 			}
 		}
 	}
+	if (parse_error.is_empty()) {
+		_update_placeholder_exports();
+	}
 	return parse_error.is_empty() ? OK : ERR_PARSE_ERROR;
 }
 
@@ -9931,16 +11341,51 @@ Vector<DocData::ClassDoc> LunariScript::get_documentation() const {
 	doc.name = class_name;
 	doc.inherits = native_base;
 	doc.brief_description = "TypeRuby-style Lunari script class.";
-	doc.description = "Lunari is a statically typed Ruby-style gameplay language for Godot. Use Ruby inheritance (`class Player < CharacterBody2D`), typed instance variables (`@health: Integer`), Inspector exports (`@export @speed: Float = 120.0`), signals (`signal hit(damage: Integer)`), and Godot lifecycle methods such as `def ready`, `def process(delta: Float)`, and `def physics_process(delta: Float)`. " + get_path();
+	doc.description = "Lunari is a statically typed Ruby-style gameplay language for Godot. Use Ruby inheritance (`class Player < CharacterBody2D`), typed instance variables (`@health: Integer`), Inspector exports (`@export @speed: Float = 120.0`), signals (`signal hit(damage: Integer)`), and Godot lifecycle methods such as `def ready`, `def process(delta: Float)`, and `def physics_process(delta: Float)`. Script path: " + get_path();
+	doc.keywords = "lunari type ruby ruby typed godot script @export @onready signal await";
 	doc.is_script_doc = true;
 	doc.script_path = get_path();
 	for (const FieldInfo &field : fields) {
 		DocData::PropertyDoc property;
 		property.name = _lunari_editor_symbol_lookup_name(field.name);
 		property.type = _lunari_type_surface(field.type);
+		Vector<String> tags;
+		if (field.is_exported) {
+			tags.push_back("exported");
+		}
+		if (field.is_onready) {
+			tags.push_back("onready");
+		}
+		if (field.is_static) {
+			tags.push_back("static");
+		}
+		if (field.is_readonly) {
+			tags.push_back("readonly");
+		}
+		for (const String &annotation : field.annotations) {
+			String annotation_name = _lunari_script_annotation_name(annotation);
+			if (!annotation_name.is_empty()) {
+				tags.push_back("@" + annotation_name);
+			}
+		}
 		property.description = field.is_exported ? "Exported Lunari instance variable. The Inspector displays this without the @ prefix." : "Typed Lunari instance variable.";
 		if (field.is_onready) {
 			property.description += " Initialized with @onready after the owner enters the scene tree.";
+		}
+		if (!field.default_expression.is_empty()) {
+			property.description += " Default expression: `" + field.default_expression + "`.";
+		}
+		if (!field.hint_string.is_empty()) {
+			property.description += " Inspector hint: `" + field.hint_string + "`.";
+		}
+		if (!tags.is_empty()) {
+			property.keywords = _lunari_join_type_parts(tags, " ");
+			property.description += " Tags: " + _lunari_join_type_parts(tags, ", ") + ".";
+		}
+		if (field.has_default_value) {
+			property.default_value = field.default_value.stringify();
+		} else if (!field.default_expression.is_empty()) {
+			property.default_value = field.default_expression;
 		}
 		doc.properties.push_back(property);
 	}
@@ -9952,16 +11397,37 @@ Vector<DocData::ClassDoc> LunariScript::get_documentation() const {
 		if (!Signature) {
 			Signature = method_signatures.find(_lunari_method_signature_key(StringName(), method_info.name));
 		}
-		if (Signature && Signature->value.return_type != StringName() && Signature->value.return_type != "void") {
+		if (Signature && Signature->value.return_type != StringName()) {
 			method.return_type = _lunari_type_surface(Signature->value.return_type);
 		}
 		for (const PropertyInfo &argument : method_info.arguments) {
 			DocData::ArgumentDoc arg;
 			arg.name = argument.name;
 			arg.type = _lunari_property_type_name(argument);
+			if (Signature) {
+				for (const LunariAST::Parameter &parameter : Signature->value.parameters) {
+					if (parameter.name == argument.name && !parameter.default_value.is_empty()) {
+						arg.default_value = parameter.default_value;
+						break;
+					}
+				}
+			}
 			method.arguments.push_back(arg);
 		}
-		method.description = "Lunari method using Ruby `def` syntax.";
+		if (method.name == "initialize") {
+			method.description = "Ruby-style constructor called when `ClassName.new(...)` creates a Lunari object.";
+		} else if (method.name == "ready") {
+			method.description = "Godot lifecycle callback called when the owner enters the scene tree.";
+		} else if (method.name == "process") {
+			method.description = "Godot frame callback. The `delta` argument is elapsed frame time in seconds.";
+		} else if (method.name == "physics_process") {
+			method.description = "Godot fixed-timestep callback. The `delta` argument is elapsed physics time in seconds.";
+		} else if (method.name == "input" || method.name == "unhandled_input") {
+			method.description = "Godot input callback.";
+		} else {
+			method.description = "Lunari method using Ruby `def` syntax.";
+		}
+		method.keywords = "lunari ruby def";
 		doc.methods.push_back(method);
 	}
 	for (const MethodInfo &signal_info : signals) {
@@ -9975,10 +11441,307 @@ Vector<DocData::ClassDoc> LunariScript::get_documentation() const {
 			signal.arguments.push_back(arg);
 		}
 		signal.description = "Typed Godot signal declared from Lunari.";
+		signal.keywords = "lunari signal typed godot";
 		doc.signals.push_back(signal);
+	}
+	for (const KeyValue<StringName, Variant> &static_field : static_fields) {
+		String key = String(static_field.key);
+		if (!key.begins_with(String(class_name) + ".")) {
+			continue;
+		}
+		DocData::ConstantDoc constant;
+		constant.name = key.substr(String(class_name).length() + 1);
+		constant.value = static_field.value.stringify();
+		constant.is_value_valid = true;
+		constant.type = Variant::get_type_name(static_field.value.get_type());
+		constant.description = "Lunari constant or static class variable.";
+		constant.keywords = "lunari constant static";
+		doc.constants.push_back(constant);
 	}
 	docs.push_back(doc);
 	return docs;
+}
+
+Array LunariScript::get_documentation_summary() const {
+	Array summaries;
+	Vector<DocData::ClassDoc> docs = get_documentation();
+	for (const DocData::ClassDoc &doc : docs) {
+		Dictionary summary;
+		summary["name"] = doc.name;
+		summary["inherits"] = doc.inherits;
+		summary["brief_description"] = doc.brief_description;
+		summary["description"] = doc.description;
+		summary["keywords"] = doc.keywords;
+		summary["script_path"] = doc.script_path;
+
+		Array language_reference;
+		const char *reference_items[][3] = {
+			{ "Class Inheritance", "class Player < CharacterBody2D", "Use Ruby inheritance syntax for Godot nodes and Lunari classes." },
+			{ "Typed Field", "@hp: Integer = 100", "Instance variables use @name: Type and are hidden from the Inspector unless exported." },
+			{ "Exported Field", "@export @display_name: String = \"Hero\"", "Exported fields appear in the Inspector without the @ prefix." },
+			{ "Method", "def ready: void", "Methods use Ruby def syntax; no-argument methods do not need parentheses." },
+			{ "Typed Method", "def damage(amount: Integer): void", "Parameters and returns are explicitly typed." },
+			{ "Signal", "signal greeted(message: String)", "Signals carry typed arguments and can be emitted or awaited." },
+			{ "Onready", "@onready @label: Label = $Hud/Label", "Onready fields resolve node paths when the owner enters the scene tree." },
+			{ "Node Shorthand", "$Hud/Label", "Dollar shorthand resolves a node path from the owner node." },
+			{ "Unique Node Shorthand", "%TitleLabel", "Percent shorthand resolves a scene-unique node name." },
+			{ "Coroutine", "await self.tree_entered", "Await suspends for a signal or coroutine state." },
+			{ "Union Type", "String | Nil", "Use TypeRuby-style unions for nullable or alternative values." },
+			{ "Typed Collections", "Array<String>, Hash<String, Variant>", "Collections can carry element/key/value types for analyzer checks." },
+			{ "Cast Check", "if node is Label ... node as Label", "Use is/as for checked Godot and Lunari type narrowing." },
+			{ "Mixin", "include InventoryRules", "Ruby-style modules can be included, prepended, or extended." },
+			{ "Abstract Contract", "abstract def tick(delta: Float): void", "Abstract methods must be implemented by concrete descendants." },
+		};
+		for (uint32_t i = 0; i < sizeof(reference_items) / sizeof(reference_items[0]); i++) {
+			Dictionary item;
+			item["name"] = reference_items[i][0];
+			item["syntax"] = reference_items[i][1];
+			item["description"] = reference_items[i][2];
+			language_reference.push_back(item);
+		}
+		summary["language_reference"] = language_reference;
+
+		Array properties;
+		for (const DocData::PropertyDoc &property : doc.properties) {
+			Dictionary item;
+			item["name"] = property.name;
+			item["type"] = property.type;
+			item["description"] = property.description;
+			item["keywords"] = property.keywords;
+			item["default_value"] = property.default_value;
+			properties.push_back(item);
+		}
+		summary["properties"] = properties;
+
+		Array methods_summary;
+		for (const DocData::MethodDoc &method : doc.methods) {
+			Dictionary item;
+			item["name"] = method.name;
+			item["return_type"] = method.return_type;
+			item["description"] = method.description;
+			item["keywords"] = method.keywords;
+			Array arguments;
+			for (const DocData::ArgumentDoc &argument : method.arguments) {
+				Dictionary arg;
+				arg["name"] = argument.name;
+				arg["type"] = argument.type;
+				arg["default_value"] = argument.default_value;
+				arguments.push_back(arg);
+			}
+			item["arguments"] = arguments;
+			methods_summary.push_back(item);
+		}
+		summary["methods"] = methods_summary;
+
+		Array signals_summary;
+		for (const DocData::MethodDoc &signal : doc.signals) {
+			Dictionary item;
+			item["name"] = signal.name;
+			item["description"] = signal.description;
+			Array arguments;
+			for (const DocData::ArgumentDoc &argument : signal.arguments) {
+				Dictionary arg;
+				arg["name"] = argument.name;
+				arg["type"] = argument.type;
+				arguments.push_back(arg);
+			}
+			item["arguments"] = arguments;
+			signals_summary.push_back(item);
+		}
+		summary["signals"] = signals_summary;
+
+		Array constants_summary;
+		for (const DocData::ConstantDoc &constant : doc.constants) {
+			Dictionary item;
+			item["name"] = constant.name;
+			item["type"] = constant.type;
+			item["value"] = constant.value;
+			item["description"] = constant.description;
+			item["keywords"] = constant.keywords;
+			constants_summary.push_back(item);
+		}
+		summary["constants"] = constants_summary;
+
+		summaries.push_back(summary);
+	}
+	return summaries;
+}
+
+Dictionary LunariScript::get_documentation_index(const String &p_query, const StringName &p_class) const {
+	const String query = p_query.strip_edges().to_lower();
+	const StringName api_class = p_class == StringName() ? get_instance_base_type() : p_class;
+
+	Dictionary index;
+	Array entries;
+
+	auto matches_query = [&query](const Dictionary &p_entry) {
+		if (query.is_empty()) {
+			return true;
+		}
+		const String haystack = (String(p_entry.get("name", String())) + " " +
+				String(p_entry.get("symbol", String())) + " " +
+				String(p_entry.get("signature", String())) + " " +
+				String(p_entry.get("kind", String())) + " " +
+				String(p_entry.get("source", String())) + " " +
+				String(p_entry.get("documentation", String()))).to_lower();
+		return haystack.find(query) >= 0;
+	};
+
+	auto push_entry = [&entries, &matches_query](Dictionary p_entry) {
+		if (matches_query(p_entry)) {
+			entries.push_back(p_entry);
+		}
+	};
+
+	const char *language_symbols[] = {
+		"require", "class", "module", "def", "end", "attr_reader", "attr_writer", "attr_accessor",
+		"@export", "@export_range", "@export_enum", "@export_flags", "@export_file", "@export_dir",
+		"@export_global_file", "@export_global_dir", "@export_save_file", "@export_global_save_file",
+		"@export_multiline", "@export_exp_easing", "@export_color_no_alpha", "@export_placeholder",
+		"@export_node_path", "@export_resource_type", "@export_storage", "@export_group",
+		"@export_subgroup", "@export_category", "@onready", "@tool", "@rpc", "signal", "await",
+		"self", "super", "type", "abstract", "include", "prepend", "extend", "load", "preload",
+		"$NodePath", "%SceneUniqueName", "ready", "process", "physics_process", "input",
+		"unhandled_input", "String", "Integer", "Float", "Boolean", "Nil", "Variant", "Symbol",
+		"Array", "Hash", "Callable", "Signal", "Resource", "PackedScene", "NodePath", "Vector2",
+		"Vector2i", "Vector3", "Vector3i", "Vector4", "Vector4i", "Rect2", "Rect2i",
+		"Transform2D", "Plane", "Quaternion", "AABB", "Basis", "Transform3D", "Projection",
+		"Color", "RID", "PackedByteArray", "PackedInt32Array", "PackedInt64Array",
+		"PackedFloat32Array", "PackedFloat64Array", "PackedStringArray", "PackedVector2Array",
+		"PackedVector3Array", "PackedColorArray"
+	};
+
+	for (uint32_t i = 0; i < sizeof(language_symbols) / sizeof(language_symbols[0]); i++) {
+		const String symbol = language_symbols[i];
+		const String help = _lunari_help_text(symbol);
+		if (help.is_empty()) {
+			continue;
+		}
+		Dictionary entry;
+		entry["source"] = "language";
+		entry["kind"] = symbol.begins_with("@") ? "annotation" : "reference";
+		entry["name"] = symbol;
+		entry["symbol"] = symbol;
+		entry["documentation"] = help;
+		entry["signature"] = symbol;
+		push_entry(entry);
+	}
+
+	for (const Dictionary &summary : get_documentation_summary()) {
+		Dictionary class_entry;
+		class_entry["source"] = "lunari";
+		class_entry["kind"] = "class";
+		class_entry["name"] = summary.get("name", String());
+		class_entry["symbol"] = summary.get("name", String());
+		class_entry["signature"] = String(summary.get("name", String())) + (String(summary.get("inherits", String())).is_empty() ? String() : String(" < ") + String(summary.get("inherits", String())));
+		class_entry["documentation"] = summary.get("description", String());
+		class_entry["path"] = summary.get("script_path", String());
+		push_entry(class_entry);
+
+		Array property_entries = summary.get("properties", Array());
+		for (int i = 0; i < property_entries.size(); i++) {
+			Dictionary property = property_entries[i];
+			Dictionary entry;
+			entry["source"] = "lunari";
+			entry["kind"] = "field";
+			entry["name"] = property.get("name", String());
+			entry["symbol"] = property.get("name", String());
+			entry["type"] = property.get("type", String());
+			entry["signature"] = String(property.get("name", String())) + ": " + String(property.get("type", String()));
+			entry["documentation"] = property.get("description", String());
+			entry["path"] = summary.get("script_path", String());
+			push_entry(entry);
+		}
+
+		Array method_entries = summary.get("methods", Array());
+		for (int i = 0; i < method_entries.size(); i++) {
+			Dictionary method = method_entries[i];
+			Dictionary entry;
+			entry["source"] = "lunari";
+			entry["kind"] = "method";
+			entry["name"] = method.get("name", String());
+			entry["symbol"] = method.get("name", String());
+			entry["type"] = method.get("return_type", String());
+			entry["signature"] = hover_symbol(StringName(String(method.get("name", String()))));
+			entry["documentation"] = method.get("description", String());
+			entry["path"] = summary.get("script_path", String());
+			push_entry(entry);
+		}
+
+		Array signal_entries = summary.get("signals", Array());
+		for (int i = 0; i < signal_entries.size(); i++) {
+			Dictionary signal = signal_entries[i];
+			Dictionary entry;
+			entry["source"] = "lunari";
+			entry["kind"] = "signal";
+			entry["name"] = signal.get("name", String());
+			entry["symbol"] = signal.get("name", String());
+			entry["signature"] = String("signal ") + String(signal.get("name", String()));
+			entry["documentation"] = signal.get("description", String());
+			entry["path"] = summary.get("script_path", String());
+			push_entry(entry);
+		}
+
+		Array constant_entries = summary.get("constants", Array());
+		for (int i = 0; i < constant_entries.size(); i++) {
+			Dictionary constant = constant_entries[i];
+			Dictionary entry;
+			entry["source"] = "lunari";
+			entry["kind"] = "constant";
+			entry["name"] = constant.get("name", String());
+			entry["symbol"] = constant.get("name", String());
+			entry["type"] = constant.get("type", String());
+			entry["signature"] = String(constant.get("name", String())) + " = " + String(constant.get("value", String()));
+			entry["documentation"] = constant.get("description", String());
+			entry["path"] = summary.get("script_path", String());
+			push_entry(entry);
+		}
+	}
+
+	if (api_class != StringName() && LunariGodotApi::has_class(api_class)) {
+		Dictionary class_entry;
+		class_entry["source"] = "godot_api";
+		class_entry["kind"] = "class";
+		class_entry["name"] = String(api_class);
+		class_entry["symbol"] = String(api_class);
+		class_entry["signature"] = String(api_class) + (LunariGodotApi::get_parent_class(api_class) == StringName() ? String() : String(" < ") + String(LunariGodotApi::get_parent_class(api_class)));
+		class_entry["documentation"] = "Godot API class available to Lunari scripts.";
+		push_entry(class_entry);
+
+		Vector<StringName> names;
+		LunariGodotApi::get_property_names(api_class, &names);
+		for (const StringName &api_member_name : names) {
+			Dictionary api = get_godot_api_member_summary(api_class, api_member_name);
+			api["source"] = "godot_api";
+			api["symbol"] = String(api_member_name);
+			api["documentation"] = String(api_class) + " property.";
+			push_entry(api);
+		}
+		names.clear();
+		LunariGodotApi::get_method_names(api_class, &names);
+		for (const StringName &api_member_name : names) {
+			Dictionary api = get_godot_api_member_summary(api_class, api_member_name);
+			api["source"] = "godot_api";
+			api["symbol"] = String(api_member_name);
+			api["documentation"] = String(api_class) + " method.";
+			push_entry(api);
+		}
+		names.clear();
+		LunariGodotApi::get_signal_names(api_class, &names);
+		for (const StringName &api_member_name : names) {
+			Dictionary api = get_godot_api_member_summary(api_class, api_member_name);
+			api["source"] = "godot_api";
+			api["symbol"] = String(api_member_name);
+			api["documentation"] = String(api_class) + " signal.";
+			push_entry(api);
+		}
+	}
+
+	index["query"] = p_query;
+	index["class"] = String(api_class);
+	index["count"] = entries.size();
+	index["entries"] = entries;
+	return index;
 }
 
 String LunariScript::get_class_icon_path() const {
@@ -10011,7 +11774,8 @@ bool LunariScript::is_valid() const {
 }
 
 bool LunariScript::is_abstract() const {
-	return false;
+	const_cast<LunariScript *>(this)->_parse();
+	return abstract_script;
 }
 
 ScriptLanguage *LunariScript::get_language() const {
@@ -10048,6 +11812,7 @@ bool LunariScript::get_property_default_value(const StringName &p_property, Vari
 void LunariScript::update_exports() {
 	parsed = false;
 	_parse();
+	_update_placeholder_exports();
 }
 
 int LunariScript::get_member_line(const StringName &p_member) const {
@@ -10091,7 +11856,8 @@ void LunariScript::get_script_property_list(List<PropertyInfo> *p_list) const {
 }
 
 const Variant LunariScript::get_rpc_config() const {
-	return Dictionary();
+	const_cast<LunariScript *>(this)->_parse();
+	return rpc_config;
 }
 
 const Vector<LunariScript::FieldInfo> &LunariScript::get_lunari_fields() {
@@ -10915,6 +12681,412 @@ String LunariScript::hover_symbol(const StringName &p_symbol, const StringName &
 	return LunariTooling::hover_symbol(p_code.is_empty() ? source : p_code, p_symbol);
 }
 
+Dictionary LunariScript::get_hover_summary(const StringName &p_symbol, const StringName &p_receiver_type, const String &p_code) const {
+	Dictionary summary;
+	summary["found"] = false;
+	summary["symbol"] = String(p_symbol);
+	summary["receiver_type"] = String(p_receiver_type);
+	summary["text"] = hover_symbol(p_symbol, p_receiver_type, p_code);
+	summary["kind"] = "unknown";
+	summary["source"] = "none";
+
+	if (p_receiver_type != StringName()) {
+		Dictionary api = get_godot_api_member_summary(p_receiver_type, p_symbol);
+		if (api.get("found", false)) {
+			summary["found"] = true;
+			summary["kind"] = api.get("kind", "member");
+			summary["source"] = "godot_api";
+			summary["type"] = api.get("type", api.get("return_type", String()));
+			summary["signature"] = api.get("signature", String());
+			summary["class"] = String(p_receiver_type);
+			summary["member"] = String(p_symbol);
+			summary["api"] = api;
+			if (String(summary["text"]).is_empty()) {
+				summary["text"] = api.get("signature", String());
+			}
+			return summary;
+		}
+	}
+
+	const String help = _lunari_help_text(p_symbol);
+	if (!help.is_empty()) {
+		summary["found"] = true;
+		summary["kind"] = String(p_symbol).begins_with("@") ? "annotation" : "keyword";
+		summary["source"] = "language";
+		summary["text"] = help;
+		summary["documentation"] = help;
+		return summary;
+	}
+
+	Dictionary definition = LunariTooling::go_to_definition(p_code.is_empty() ? source : p_code, p_symbol);
+	if (definition.get("found", false)) {
+		summary["found"] = true;
+		summary["kind"] = definition.get("kind", "symbol");
+		summary["source"] = "lunari";
+		summary["name"] = definition.get("name", String(p_symbol));
+		summary["source_name"] = definition.get("source_name", String(p_symbol));
+		summary["type"] = definition.get("type", String());
+		summary["line"] = definition.get("line", 0);
+		summary["definition"] = definition;
+		if (String(summary["text"]).is_empty()) {
+			summary["text"] = LunariTooling::hover_symbol(p_code.is_empty() ? source : p_code, p_symbol);
+		}
+		return summary;
+	}
+
+	return summary;
+}
+
+Dictionary LunariScript::complete_source_code(const String &p_code) const {
+	Dictionary result;
+	result["error"] = int(ERR_UNAVAILABLE);
+	result["force"] = false;
+	result["call_hint"] = String();
+	Array serialized_options;
+
+	LunariLanguage *language = LunariLanguage::get_singleton();
+	if (!language) {
+		result["options"] = serialized_options;
+		return result;
+	}
+
+	List<ScriptLanguage::CodeCompletionOption> options;
+	bool force = false;
+	String call_hint;
+	const String code = p_code.is_empty() ? source : p_code;
+	const Error err = language->complete_code(code, get_path(), nullptr, &options, force, call_hint);
+	for (const ScriptLanguage::CodeCompletionOption &option : options) {
+		Dictionary item;
+		item["display"] = option.display;
+		item["insert_text"] = option.insert_text;
+		item["kind"] = int(option.kind);
+		item["location"] = option.location;
+		item["theme_color_name"] = option.theme_color_name;
+		serialized_options.push_back(item);
+	}
+
+	result["error"] = int(err);
+	result["force"] = force;
+	result["call_hint"] = call_hint;
+	result["options"] = serialized_options;
+	return result;
+}
+
+Dictionary LunariScript::explain_diagnostic(const String &p_message) const {
+	Dictionary help;
+	const String message = p_message.to_lower();
+	Array quick_fixes;
+
+	help["category"] = "Lunari";
+	help["summary"] = p_message;
+	help["details"] = "Review the Lunari TypeRuby syntax at this line.";
+
+	if (message.contains("must declare a type") || message.contains("methods must declare a return type")) {
+		help["category"] = "Type annotation";
+		help["details"] = "Lunari requires explicit types for fields, method parameters, and method return values. Use TypeRuby-style signatures such as 'def ready: void' or 'def move(delta: Float): void'.";
+		quick_fixes.push_back("Add ': Type' to each untyped parameter.");
+		quick_fixes.push_back("Add ': ReturnType' after the method name, using ': void' when the method does not return a value.");
+	} else if (message.contains("cannot assign") || message.contains("could not infer expression type")) {
+		help["category"] = "Type mismatch";
+		help["details"] = "The assigned value must match the declared Lunari type. Construct Godot objects with Ruby-style calls like 'Label.new', cast with 'as Type' only after a checked 'is Type', or change the field type.";
+		quick_fixes.push_back("Make the right-hand expression produce the declared type.");
+		quick_fixes.push_back("Declare a local variable with an explicit type when inference is ambiguous.");
+	} else if (message.contains("unknown method") || message.contains("unknown function") || message.contains("missing method")) {
+		help["category"] = "Missing member";
+		help["details"] = "The receiver type does not expose that method in Lunari's Godot API snapshot or in the current script. Check the receiver type, method spelling, and whether the call needs Ruby-style no-parentheses syntax.";
+		quick_fixes.push_back("Use autocomplete or hover on the receiver type to choose an available member.");
+		quick_fixes.push_back("Add the method to the Lunari class if it is a user-defined call.");
+	} else if (message.contains("expects") && message.contains("arguments")) {
+		help["category"] = "Argument count";
+		help["details"] = "The call does not match the typed method signature. Lunari checks Godot API and user method arguments before runtime.";
+		quick_fixes.push_back("Match the number of arguments shown in hover or call hints.");
+		quick_fixes.push_back("Use default arguments only where the method signature declares them.");
+	} else if (message.contains("onready")) {
+		help["category"] = "Onready binding";
+		help["details"] = "An @onready field must resolve to a node or resource compatible with its declared type when the script instance enters the scene.";
+		quick_fixes.push_back("Point the NodePath at a node with the declared type.");
+		quick_fixes.push_back("Change the field type to the node type actually returned by the path.");
+	} else if (message.contains("unreachable")) {
+		help["category"] = "Control flow";
+		help["details"] = "Code after return, break, or next in the same block will never run. Lunari reports this as an editor warning.";
+		quick_fixes.push_back("Move the statement before the control-flow exit.");
+		quick_fixes.push_back("Delete the unreachable statement if it is not needed.");
+	}
+
+	help["quick_fixes"] = quick_fixes;
+	return help;
+}
+
+Dictionary LunariScript::get_godot_api_member_summary(const StringName &p_class, const StringName &p_member) const {
+	Dictionary summary;
+	summary["found"] = false;
+	summary["class"] = String(p_class);
+	summary["member"] = String(p_member);
+
+	if (!LunariGodotApi::has_class(p_class)) {
+		summary["kind"] = "unknown";
+		return summary;
+	}
+
+	PropertyInfo property;
+	if (LunariGodotApi::get_property_info(p_class, p_member, &property)) {
+		StringName setter;
+		StringName getter;
+		LunariGodotApi::get_property_setter(p_class, p_member, &setter);
+		LunariGodotApi::get_property_getter(p_class, p_member, &getter);
+		summary["found"] = true;
+		summary["kind"] = "property";
+		summary["name"] = String(property.name);
+		summary["type"] = String(LunariGodotApi::type_from_property(property));
+		summary["class_name"] = String(property.class_name);
+		summary["signature"] = LunariGodotApi::get_property_signature(p_class, p_member);
+		summary["setter"] = String(setter);
+		summary["getter"] = String(getter);
+		summary["hint"] = int(property.hint);
+		summary["hint_string"] = property.hint_string;
+		summary["usage"] = int(property.usage);
+		return summary;
+	}
+
+	LunariGodotApi::Method method;
+	if (LunariGodotApi::get_method_info(p_class, p_member, &method)) {
+		Array arguments;
+		for (int i = 0; i < method.info.arguments.size(); i++) {
+			const PropertyInfo &argument = method.info.arguments[i];
+			Dictionary arg;
+			arg["name"] = String(argument.name);
+			arg["type"] = String(LunariGodotApi::type_from_property(argument));
+			arg["class_name"] = String(argument.class_name);
+			arg["hint"] = int(argument.hint);
+			arg["hint_string"] = argument.hint_string;
+			arguments.push_back(arg);
+		}
+		Array defaults;
+		for (const Variant &default_argument : method.default_arguments) {
+			defaults.push_back(default_argument.stringify());
+		}
+		summary["found"] = true;
+		summary["kind"] = "method";
+		summary["name"] = String(method.info.name);
+		summary["return_type"] = String(method.return_type);
+		summary["signature"] = LunariGodotApi::get_method_signature(p_class, p_member);
+		summary["arguments"] = arguments;
+		summary["default_arguments"] = defaults;
+		summary["required_argument_count"] = MAX(0, method.info.arguments.size() - method.default_arguments.size());
+		summary["argument_count"] = method.info.arguments.size();
+		summary["flags"] = int(method.flags);
+		summary["has_fast_bind"] = method.bind != nullptr;
+		return summary;
+	}
+
+	MethodInfo signal;
+	if (LunariGodotApi::get_signal_info(p_class, p_member, &signal)) {
+		Array arguments;
+		for (const PropertyInfo &argument : signal.arguments) {
+			Dictionary arg;
+			arg["name"] = String(argument.name);
+			arg["type"] = String(LunariGodotApi::type_from_property(argument));
+			arg["class_name"] = String(argument.class_name);
+			arg["hint"] = int(argument.hint);
+			arg["hint_string"] = argument.hint_string;
+			arguments.push_back(arg);
+		}
+		summary["found"] = true;
+		summary["kind"] = "signal";
+		summary["name"] = String(signal.name);
+		summary["signature"] = LunariGodotApi::get_signal_signature(p_class, p_member);
+		summary["arguments"] = arguments;
+		summary["argument_count"] = signal.arguments.size();
+		return summary;
+	}
+
+	int64_t constant_value = 0;
+	StringName enum_name;
+	if (LunariGodotApi::get_constant(p_class, p_member, &constant_value, &enum_name)) {
+		summary["found"] = true;
+		summary["kind"] = "constant";
+		summary["name"] = String(p_member);
+		summary["value"] = constant_value;
+		summary["enum"] = String(enum_name);
+		summary["signature"] = enum_name == StringName() ? String(p_member) + " = " + itos(constant_value) : String(p_member) + " = " + itos(constant_value) + " (" + String(enum_name) + ")";
+		return summary;
+	}
+
+	LunariGodotApi::EnumInfo enum_info;
+	if (LunariGodotApi::get_enum_info(p_class, p_member, &enum_info)) {
+		Array constants;
+		for (const StringName &constant : enum_info.constants) {
+			constants.push_back(String(constant));
+		}
+		summary["found"] = true;
+		summary["kind"] = "enum";
+		summary["name"] = String(enum_info.name);
+		summary["is_bitfield"] = enum_info.is_bitfield;
+		summary["constants"] = constants;
+		summary["signature"] = String(enum_info.name) + (enum_info.is_bitfield ? " bitfield" : " enum");
+		return summary;
+	}
+
+	summary["kind"] = "unknown";
+	return summary;
+}
+
+String LunariScript::validate_script_path(const String &p_path) const {
+	LunariLanguage *language = LunariLanguage::get_singleton();
+	if (!language) {
+		return RTR("Lunari language is not registered.");
+	}
+	return language->validate_path(p_path);
+}
+
+Array LunariScript::get_template_summary(const StringName &p_base_type) const {
+	Array summary;
+	LunariLanguage *language = LunariLanguage::get_singleton();
+	if (!language) {
+		return summary;
+	}
+
+	Vector<ScriptLanguage::ScriptTemplate> templates = language->get_built_in_templates(p_base_type);
+	for (const ScriptLanguage::ScriptTemplate &script_template : templates) {
+		Dictionary item;
+		item["name"] = script_template.name;
+		item["description"] = script_template.description;
+		item["inherit"] = String(script_template.inherit);
+		item["content"] = script_template.content;
+		summary.push_back(item);
+	}
+	return summary;
+}
+
+Dictionary LunariScript::validate_source_summary(const String &p_code, const String &p_path) const {
+	Dictionary summary;
+	LunariLanguage *language = LunariLanguage::get_singleton();
+	if (!language) {
+		summary["valid"] = false;
+		summary["error"] = "Lunari language is not registered.";
+		summary["functions"] = Array();
+		summary["errors"] = Array();
+		summary["warnings"] = Array();
+		summary["safe_lines"] = Array();
+		return summary;
+	}
+
+	List<String> functions;
+	List<ScriptLanguage::ScriptError> errors;
+	List<ScriptLanguage::Warning> warnings;
+	HashSet<int> safe_lines;
+	const String code = p_code.is_empty() ? source : p_code;
+	const String path = p_path.is_empty() ? get_path() : p_path;
+	const bool valid = language->validate(code, path, &functions, &errors, &warnings, &safe_lines);
+	const Array source_fixes = suggest_source_fixes(code, path);
+
+	auto fixes_for_line = [&source_fixes](int p_line) {
+		Array line_fixes;
+		for (int i = 0; i < source_fixes.size(); i++) {
+			Dictionary fix = source_fixes[i];
+			if (int(fix.get("line", 0)) == p_line) {
+				line_fixes.push_back(fix);
+			}
+		}
+		return line_fixes;
+	};
+
+	Array serialized_functions;
+	for (const String &function : functions) {
+		serialized_functions.push_back(function);
+	}
+
+	Array serialized_errors;
+	for (const ScriptLanguage::ScriptError &error : errors) {
+		Dictionary item;
+		item["path"] = error.path;
+		item["line"] = error.line;
+		item["column"] = error.column;
+		item["message"] = error.message;
+		const Dictionary help = explain_diagnostic(error.message);
+		item["help"] = help.get("details", String());
+		item["category"] = help.get("category", String("Lunari"));
+		item["quick_fixes"] = help.get("quick_fixes", Array());
+		item["source_fixes"] = fixes_for_line(error.line);
+		serialized_errors.push_back(item);
+	}
+
+	Array serialized_warnings;
+	for (const ScriptLanguage::Warning &warning : warnings) {
+		Dictionary item;
+		item["start_line"] = warning.start_line;
+		item["end_line"] = warning.end_line;
+		item["code"] = warning.code;
+		item["string_code"] = warning.string_code;
+		item["message"] = warning.message;
+		const Dictionary help = explain_diagnostic(warning.message);
+		item["help"] = help.get("details", String());
+		item["category"] = help.get("category", String("Lunari"));
+		item["quick_fixes"] = help.get("quick_fixes", Array());
+		item["source_fixes"] = fixes_for_line(warning.start_line);
+		serialized_warnings.push_back(item);
+	}
+
+	Array serialized_safe_lines;
+	for (const int &line : safe_lines) {
+		serialized_safe_lines.push_back(line);
+	}
+	serialized_safe_lines.sort();
+
+	summary["valid"] = valid;
+	summary["functions"] = serialized_functions;
+	summary["errors"] = serialized_errors;
+	summary["warnings"] = serialized_warnings;
+	summary["safe_lines"] = serialized_safe_lines;
+	summary["source_fixes"] = source_fixes;
+	summary["source_fix_count"] = source_fixes.size();
+	return summary;
+}
+
+Array LunariScript::collect_project_outline(const Dictionary &p_sources) const {
+	return LunariTooling::collect_project_outline(p_sources);
+}
+
+Dictionary LunariScript::build_project_symbol_index(const Dictionary &p_sources) const {
+	return LunariTooling::build_project_symbol_index(p_sources);
+}
+
+Array LunariScript::find_project_references(const Dictionary &p_sources, const StringName &p_symbol) const {
+	return LunariTooling::find_project_references(p_sources, p_symbol);
+}
+
+Dictionary LunariScript::rename_project_symbol(const Dictionary &p_sources, const StringName &p_old_name, const StringName &p_new_name) const {
+	return LunariTooling::rename_project_symbol(p_sources, p_old_name, p_new_name);
+}
+
+Dictionary LunariScript::go_to_project_definition(const Dictionary &p_sources, const StringName &p_symbol) const {
+	return LunariTooling::go_to_project_definition(p_sources, p_symbol);
+}
+
+Dictionary LunariScript::analyze_project_graph(const Dictionary &p_sources, const Array &p_changed_paths) const {
+	return LunariTooling::analyze_project_graph(p_sources, p_changed_paths);
+}
+
+Dictionary LunariScript::analyze_project_readiness(const Dictionary &p_sources) const {
+	return LunariTooling::analyze_project_readiness(p_sources);
+}
+
+Array LunariScript::suggest_source_fixes(const String &p_code, const String &p_path) const {
+	return LunariTooling::suggest_source_fixes(p_code.is_empty() ? source : p_code, p_path);
+}
+
+Dictionary LunariScript::apply_source_fixes(const String &p_code, const Array &p_fixes) const {
+	return LunariTooling::apply_source_fixes(p_code.is_empty() ? source : p_code, p_fixes);
+}
+
+Array LunariScript::suggest_project_source_fixes(const Dictionary &p_sources) const {
+	return LunariTooling::suggest_project_source_fixes(p_sources);
+}
+
+Dictionary LunariScript::apply_project_source_fixes(const Dictionary &p_sources, const Array &p_fixes) const {
+	return LunariTooling::apply_project_source_fixes(p_sources, p_fixes);
+}
+
 bool LunariScript::debug_tokenizer_roundtrip(const String &p_code, bool p_compressed) const {
 	LunariTokenizer source_tokenizer;
 	source_tokenizer.set_source_code(p_code);
@@ -10937,6 +13109,206 @@ bool LunariScript::debug_tokenizer_roundtrip(const String &p_code, bool p_compre
 		}
 	}
 	return true;
+}
+
+Dictionary LunariScript::debug_language_state_probe() const {
+	Dictionary probe;
+	LunariLanguage *language = LunariLanguage::get_singleton();
+	if (!language) {
+		probe["ok"] = false;
+		probe["error"] = "Lunari language singleton is not available.";
+		return probe;
+	}
+
+	const StringName global_name = "_LUNARI_DEBUG_PROBE";
+	language->add_named_global_constant(global_name, 12345);
+
+	List<String> globals;
+	List<Variant> values;
+	language->debug_get_globals(&globals, &values);
+	bool saw_global = false;
+	const List<String>::Element *name_element = globals.front();
+	const List<Variant>::Element *value_element = values.front();
+	while (name_element && value_element) {
+		if (name_element->get() == String(global_name) && int(value_element->get()) == 12345) {
+			saw_global = true;
+			break;
+		}
+		name_element = name_element->next();
+		value_element = value_element->next();
+	}
+
+	LunariLanguage::DebugFrame frame;
+	frame.function = "debug_probe";
+	frame.source = get_path();
+	frame.line = 1;
+	frame.locals["local_value"] = "local-ok";
+	frame.members["@title"] = "member-ok";
+	Vector<LunariLanguage::DebugFrame> stack;
+	stack.push_back(frame);
+	language->set_debug_state("debug probe", stack);
+
+	const String local_value = language->debug_parse_stack_level_expression(0, "local_value");
+	const String ivar_value = language->debug_parse_stack_level_expression(0, "@title");
+	const String clean_ivar_value = language->debug_parse_stack_level_expression(0, "title");
+	const String self_ivar_value = language->debug_parse_stack_level_expression(0, "self.title");
+	const String global_value = language->debug_parse_stack_level_expression(0, String(global_name));
+
+	language->remove_named_global_constant(global_name);
+	language->clear_debug_state();
+
+	probe["ok"] = saw_global && local_value == "local-ok" && ivar_value == "member-ok" && clean_ivar_value == "member-ok" && self_ivar_value == "member-ok" && global_value == "12345";
+	probe["saw_global"] = saw_global;
+	probe["local_value"] = local_value;
+	probe["ivar_value"] = ivar_value;
+	probe["clean_ivar_value"] = clean_ivar_value;
+	probe["self_ivar_value"] = self_ivar_value;
+	probe["global_value"] = global_value;
+	return probe;
+}
+
+Dictionary LunariScript::debug_profile_state_probe() const {
+	Dictionary probe;
+	LunariLanguage *language = LunariLanguage::get_singleton();
+	if (!language) {
+		probe["ok"] = false;
+		probe["error"] = "Lunari language singleton is not available.";
+		return probe;
+	}
+
+	language->profiling_start();
+	language->profiling_set_save_native_calls(true);
+	language->record_profile_call("Main::ready");
+	language->record_profile_call("Main::ready");
+	language->record_profile_call("Main::process");
+
+	ScriptLanguage::ProfilingInfo accumulated[8] = {};
+	const int accumulated_count = language->profiling_get_accumulated_data(accumulated, 8);
+	language->frame();
+	ScriptLanguage::ProfilingInfo frame_data[8] = {};
+	const int frame_count = language->profiling_get_frame_data(frame_data, 8);
+	language->frame();
+	ScriptLanguage::ProfilingInfo empty_frame_data[8] = {};
+	const int empty_frame_count = language->profiling_get_frame_data(empty_frame_data, 8);
+	language->profiling_stop();
+
+	bool accumulated_ready = false;
+	bool accumulated_process = false;
+	for (int i = 0; i < accumulated_count; i++) {
+		if (accumulated[i].signature == StringName("Main::ready") && accumulated[i].call_count == 2) {
+			accumulated_ready = true;
+		}
+		if (accumulated[i].signature == StringName("Main::process") && accumulated[i].call_count == 1) {
+			accumulated_process = true;
+		}
+	}
+
+	bool frame_ready = false;
+	bool frame_process = false;
+	for (int i = 0; i < frame_count; i++) {
+		if (frame_data[i].signature == StringName("Main::ready") && frame_data[i].call_count == 2) {
+			frame_ready = true;
+		}
+		if (frame_data[i].signature == StringName("Main::process") && frame_data[i].call_count == 1) {
+			frame_process = true;
+		}
+	}
+
+	probe["ok"] = accumulated_ready && accumulated_process && frame_ready && frame_process && empty_frame_count == 0;
+	probe["accumulated_count"] = accumulated_count;
+	probe["frame_count"] = frame_count;
+	probe["empty_frame_count"] = empty_frame_count;
+	probe["accumulated_ready"] = accumulated_ready;
+	probe["accumulated_process"] = accumulated_process;
+	probe["frame_ready"] = frame_ready;
+	probe["frame_process"] = frame_process;
+	return probe;
+}
+
+Dictionary LunariScript::debug_placeholder_state_probe() const {
+	Dictionary probe;
+#ifdef TOOLS_ENABLED
+	Ref<LunariScript> script;
+	script.instantiate();
+	script->set_source_code(
+			"require \"godot\"\n"
+			"\n"
+			"class PlaceholderProbe < Node\n"
+			"  @export @title: String = \"Before\"\n"
+			"  @export_range(0, 10, 1) @count: Integer = 3\n"
+			"\n"
+			"  def ready\n"
+			"  end\n"
+			"end\n");
+	Error err = script->reload();
+	if (err != OK) {
+		probe["ok"] = false;
+		probe["error"] = script->parse_error;
+		return probe;
+	}
+
+	PlaceHolderScriptInstance *placeholder = script->placeholder_instance_create(nullptr);
+	if (!placeholder) {
+		probe["ok"] = false;
+		probe["error"] = "Failed to create Lunari placeholder instance.";
+		return probe;
+	}
+
+	auto read_placeholder_state = [](PlaceHolderScriptInstance *p_placeholder) {
+		Dictionary state;
+		List<PropertyInfo> properties;
+		p_placeholder->get_property_list(&properties);
+		Array names;
+		for (const PropertyInfo &property : properties) {
+			names.push_back(String(property.name));
+		}
+		Variant title;
+		Variant count;
+		Variant enabled;
+		state["names"] = names;
+		state["has_title"] = names.has("title");
+		state["has_count"] = names.has("count");
+		state["has_enabled"] = names.has("enabled");
+		state["title_ok"] = p_placeholder->get("title", title);
+		state["count_ok"] = p_placeholder->get("count", count);
+		state["enabled_ok"] = p_placeholder->get("enabled", enabled);
+		state["title"] = title;
+		state["count"] = count;
+		state["enabled"] = enabled;
+		return state;
+	};
+
+	Dictionary initial = read_placeholder_state(placeholder);
+	script->set_source_code(
+			"require \"godot\"\n"
+			"\n"
+			"class PlaceholderProbe < Node\n"
+			"  @export @title: String = \"After\"\n"
+			"  @export_range(0, 10, 1) @count: Integer = 7\n"
+			"  @export @enabled: Boolean = true\n"
+			"\n"
+			"  def ready\n"
+			"  end\n"
+			"end\n");
+	err = script->reload();
+	Dictionary updated = read_placeholder_state(placeholder);
+
+	const bool initial_ok = bool(initial["has_title"]) && bool(initial["has_count"]) && String(initial["title"]) == "Before" && int(initial["count"]) == 3;
+	const bool updated_ok = err == OK && bool(updated["has_title"]) && bool(updated["has_count"]) && bool(updated["has_enabled"]) && String(updated["title"]) == "After" && int(updated["count"]) == 7 && bool(updated["enabled"]);
+	memdelete(placeholder);
+
+	probe["ok"] = initial_ok && updated_ok;
+	probe["initial"] = initial;
+	probe["updated"] = updated;
+	probe["reload_ok"] = err == OK;
+	if (err != OK) {
+		probe["error"] = script->parse_error;
+	}
+#else
+	probe["ok"] = true;
+	probe["skipped"] = "TOOLS_ENABLED is not defined.";
+#endif
+	return probe;
 }
 
 static bool _lunari_try_fast_int_term(const String &p_term, HashMap<StringName, Variant> *p_locals, int64_t *r_value) {
@@ -11305,8 +13677,9 @@ bool LunariScript::_execute_bytecode_method(const StringName &p_owner_class, con
 	}
 	LunariVM vm;
 	LunariVM::Result vm_result = vm.execute_method(this, bytecode, p_owner_class, p_method, p_instance, p_locals, p_self);
-	if (LunariLanguage::get_singleton()) {
-		LunariLanguage::get_singleton()->record_profile_call(p_method);
+	if (LunariLanguage::get_singleton() && LunariLanguage::get_singleton()->is_profiling_active()) {
+		StringName profile_signature = p_owner_class == StringName() ? p_method : StringName(String(p_owner_class) + "::" + String(p_method));
+		LunariLanguage::get_singleton()->record_profile_call(profile_signature);
 	}
 	Vector<LunariLanguage::DebugFrame> debug_frames;
 	for (const LunariVM::CallFrame &frame : vm_result.frames) {
@@ -12025,7 +14398,7 @@ LunariScript::FastBytecodeMethodPlan *LunariScript::_get_fast_bytecode_method_pl
 	if (!Signature && p_owner_class != StringName()) {
 		Signature = method_signatures.find(_lunari_method_signature_key(StringName(), p_method));
 	}
-	if (!Signature || Signature->value.parameters.size() != 1 || Signature->value.parameters[0].is_rest || Signature->value.parameters[0].is_keyword || Signature->value.parameters[0].is_block) {
+	if (!Signature || !_lunari_signature_supports_one_arg_fast_plan(Signature->value)) {
 		return &Stored->value;
 	}
 	const LunariBytecode::Function *function = nullptr;
@@ -12045,24 +14418,45 @@ LunariScript::FastBytecodeMethodPlan *LunariScript::_get_fast_bytecode_method_pl
 		}
 		ops.push_back(&instruction);
 	}
-	if (ops.is_empty() || ops.size() > 2) {
+	Stored->value.parameter_name = Signature->value.parameters[0].name;
+	Stored->value.parameter_names.clear();
+	for (const LunariAST::Parameter &parameter : Signature->value.parameters) {
+		Stored->value.parameter_names.push_back(parameter.name);
+	}
+	if (ops.is_empty()) {
 		return &Stored->value;
 	}
-	Stored->value.parameter_name = Signature->value.parameters[0].name;
 	Stored->value.op_count = ops.size();
 	Stored->value.first_opcode = ops[0]->opcode;
-	Stored->value.first_a = ops[0]->operand_a;
+	if (_lunari_compile_fast_filtered_array_sum_plan(ops, Signature->value, &Stored->value) ||
+			_lunari_compile_fast_array_literal_sum_plan(ops, Signature->value, &Stored->value) ||
+			_lunari_compile_fast_string_key_hash_sum_plan(ops, Signature->value, &Stored->value) ||
+			_lunari_compile_fast_local_int_return_plan(ops, Signature->value, &Stored->value) ||
+			_lunari_compile_fast_event_condition_plan(ops, Signature->value, &Stored->value) ||
+			_lunari_compile_fast_signal_emit_return_plan(ops, Signature->value, &Stored->value) ||
+			_lunari_compile_fast_resource_load_return_plan(ops, Signature->value, &Stored->value)) {
+		return &Stored->value;
+	}
+	if (ops.size() > 2) {
+		return &Stored->value;
+	}
+	const String first_expression = _lunari_substitute_fast_default_parameters(ops[0]->opcode == LunariBytecode::OP_RETURN ? ops[0]->operand_a : ops[0]->operand_c, Signature->value);
+	Stored->value.first_a = ops[0]->opcode == LunariBytecode::OP_RETURN ? first_expression : ops[0]->operand_a;
 	Stored->value.first_b = ops[0]->operand_b;
-	Stored->value.first_c = ops[0]->operand_c;
+	Stored->value.first_c = ops[0]->opcode == LunariBytecode::OP_RETURN ? ops[0]->operand_c : first_expression;
 	const String parameter_name = String(Stored->value.parameter_name);
-	_lunari_compile_one_arg_fast_expression(ops[0]->opcode == LunariBytecode::OP_RETURN ? ops[0]->operand_a : ops[0]->operand_c, parameter_name, &Stored->value.first_expression_kind, &Stored->value.first_mul, &Stored->value.first_add, &Stored->value.first_string_prefix, &Stored->value.first_field_name, &Stored->value.first_property_name);
+	_lunari_compile_one_arg_fast_expression(first_expression, parameter_name, &Stored->value.first_expression_kind, &Stored->value.first_mul, &Stored->value.first_add, &Stored->value.first_string_prefix, &Stored->value.first_field_name, &Stored->value.first_property_name);
+	if (Stored->value.first_expression_kind == LUNARI_FAST_EXPR_NONE && ops[0]->opcode == LunariBytecode::OP_RETURN && _lunari_compile_multi_arg_sum_expression(ops[0]->operand_a, Signature->value.parameters, &Stored->value.parameter_names, &Stored->value.first_add)) {
+		Stored->value.first_expression_kind = LUNARI_FAST_EXPR_INT_ARG_SUM;
+	}
 	_lunari_precompute_small_int_strings(Stored->value.first_expression_kind, Stored->value.first_string_prefix, &Stored->value.first_small_int_strings);
 	if (ops.size() == 2) {
+		const String second_expression = _lunari_substitute_fast_default_parameters(ops[1]->opcode == LunariBytecode::OP_RETURN ? ops[1]->operand_a : ops[1]->operand_c, Signature->value);
 		Stored->value.second_opcode = ops[1]->opcode;
-		Stored->value.second_a = ops[1]->operand_a;
+		Stored->value.second_a = ops[1]->opcode == LunariBytecode::OP_RETURN ? second_expression : ops[1]->operand_a;
 		Stored->value.second_b = ops[1]->operand_b;
-		Stored->value.second_c = ops[1]->operand_c;
-		_lunari_compile_one_arg_fast_expression(ops[1]->opcode == LunariBytecode::OP_RETURN ? ops[1]->operand_a : ops[1]->operand_c, parameter_name, &Stored->value.second_expression_kind, &Stored->value.second_mul, &Stored->value.second_add, &Stored->value.second_string_prefix, &Stored->value.second_field_name, &Stored->value.second_property_name);
+		Stored->value.second_c = ops[1]->opcode == LunariBytecode::OP_RETURN ? ops[1]->operand_c : second_expression;
+		_lunari_compile_one_arg_fast_expression(second_expression, parameter_name, &Stored->value.second_expression_kind, &Stored->value.second_mul, &Stored->value.second_add, &Stored->value.second_string_prefix, &Stored->value.second_field_name, &Stored->value.second_property_name);
 		_lunari_precompute_small_int_strings(Stored->value.second_expression_kind, Stored->value.second_string_prefix, &Stored->value.second_small_int_strings);
 	}
 	Stored->value.supported = (ops.size() == 1 && ops[0]->opcode == LunariBytecode::OP_RETURN) ||
@@ -12090,7 +14484,7 @@ LunariScript::FastBytecodeMethodPlan *LunariScript::_get_fast_instance_bytecode_
 	if (!Signature) {
 		Signature = method_signatures.find(_lunari_method_signature_key(StringName(), p_method));
 	}
-	if (!Signature || Signature->value.parameters.size() != 1 || Signature->value.parameters[0].is_rest || Signature->value.parameters[0].is_keyword || Signature->value.parameters[0].is_block) {
+	if (!Signature || !_lunari_signature_supports_one_arg_fast_plan(Signature->value)) {
 		return &Stored->value;
 	}
 	const LunariBytecode::Function *function = nullptr;
@@ -12110,24 +14504,45 @@ LunariScript::FastBytecodeMethodPlan *LunariScript::_get_fast_instance_bytecode_
 		}
 		ops.push_back(&instruction);
 	}
-	if (ops.is_empty() || ops.size() > 2) {
+	Stored->value.parameter_name = Signature->value.parameters[0].name;
+	Stored->value.parameter_names.clear();
+	for (const LunariAST::Parameter &parameter : Signature->value.parameters) {
+		Stored->value.parameter_names.push_back(parameter.name);
+	}
+	if (ops.is_empty()) {
 		return &Stored->value;
 	}
-	Stored->value.parameter_name = Signature->value.parameters[0].name;
 	Stored->value.op_count = ops.size();
 	Stored->value.first_opcode = ops[0]->opcode;
-	Stored->value.first_a = ops[0]->operand_a;
+	if (_lunari_compile_fast_filtered_array_sum_plan(ops, Signature->value, &Stored->value) ||
+			_lunari_compile_fast_array_literal_sum_plan(ops, Signature->value, &Stored->value) ||
+			_lunari_compile_fast_string_key_hash_sum_plan(ops, Signature->value, &Stored->value) ||
+			_lunari_compile_fast_local_int_return_plan(ops, Signature->value, &Stored->value) ||
+			_lunari_compile_fast_event_condition_plan(ops, Signature->value, &Stored->value) ||
+			_lunari_compile_fast_signal_emit_return_plan(ops, Signature->value, &Stored->value) ||
+			_lunari_compile_fast_resource_load_return_plan(ops, Signature->value, &Stored->value)) {
+		return &Stored->value;
+	}
+	if (ops.size() > 2) {
+		return &Stored->value;
+	}
+	const String first_expression = _lunari_substitute_fast_default_parameters(ops[0]->opcode == LunariBytecode::OP_RETURN ? ops[0]->operand_a : ops[0]->operand_c, Signature->value);
+	Stored->value.first_a = ops[0]->opcode == LunariBytecode::OP_RETURN ? first_expression : ops[0]->operand_a;
 	Stored->value.first_b = ops[0]->operand_b;
-	Stored->value.first_c = ops[0]->operand_c;
+	Stored->value.first_c = ops[0]->opcode == LunariBytecode::OP_RETURN ? ops[0]->operand_c : first_expression;
 	const String parameter_name = String(Stored->value.parameter_name);
-	_lunari_compile_one_arg_fast_expression(ops[0]->opcode == LunariBytecode::OP_RETURN ? ops[0]->operand_a : ops[0]->operand_c, parameter_name, &Stored->value.first_expression_kind, &Stored->value.first_mul, &Stored->value.first_add, &Stored->value.first_string_prefix, &Stored->value.first_field_name, &Stored->value.first_property_name);
+	_lunari_compile_one_arg_fast_expression(first_expression, parameter_name, &Stored->value.first_expression_kind, &Stored->value.first_mul, &Stored->value.first_add, &Stored->value.first_string_prefix, &Stored->value.first_field_name, &Stored->value.first_property_name);
+	if (Stored->value.first_expression_kind == LUNARI_FAST_EXPR_NONE && ops[0]->opcode == LunariBytecode::OP_RETURN && _lunari_compile_multi_arg_sum_expression(ops[0]->operand_a, Signature->value.parameters, &Stored->value.parameter_names, &Stored->value.first_add)) {
+		Stored->value.first_expression_kind = LUNARI_FAST_EXPR_INT_ARG_SUM;
+	}
 	_lunari_precompute_small_int_strings(Stored->value.first_expression_kind, Stored->value.first_string_prefix, &Stored->value.first_small_int_strings);
 	if (ops.size() == 2) {
+		const String second_expression = _lunari_substitute_fast_default_parameters(ops[1]->opcode == LunariBytecode::OP_RETURN ? ops[1]->operand_a : ops[1]->operand_c, Signature->value);
 		Stored->value.second_opcode = ops[1]->opcode;
-		Stored->value.second_a = ops[1]->operand_a;
+		Stored->value.second_a = ops[1]->opcode == LunariBytecode::OP_RETURN ? second_expression : ops[1]->operand_a;
 		Stored->value.second_b = ops[1]->operand_b;
-		Stored->value.second_c = ops[1]->operand_c;
-		_lunari_compile_one_arg_fast_expression(ops[1]->opcode == LunariBytecode::OP_RETURN ? ops[1]->operand_a : ops[1]->operand_c, parameter_name, &Stored->value.second_expression_kind, &Stored->value.second_mul, &Stored->value.second_add, &Stored->value.second_string_prefix, &Stored->value.second_field_name, &Stored->value.second_property_name);
+		Stored->value.second_c = ops[1]->opcode == LunariBytecode::OP_RETURN ? ops[1]->operand_c : second_expression;
+		_lunari_compile_one_arg_fast_expression(second_expression, parameter_name, &Stored->value.second_expression_kind, &Stored->value.second_mul, &Stored->value.second_add, &Stored->value.second_string_prefix, &Stored->value.second_field_name, &Stored->value.second_property_name);
 		_lunari_precompute_small_int_strings(Stored->value.second_expression_kind, Stored->value.second_string_prefix, &Stored->value.second_small_int_strings);
 	}
 	Stored->value.supported = (ops.size() == 1 && ops[0]->opcode == LunariBytecode::OP_RETURN) ||
@@ -12136,7 +14551,7 @@ LunariScript::FastBytecodeMethodPlan *LunariScript::_get_fast_instance_bytecode_
 }
 
 bool LunariScript::_execute_fast_instance_bytecode_methodp(const StringName &p_method, LunariScriptInstance *p_instance, const Variant **p_args, int p_argcount, Variant *r_return_value) {
-	if (p_argcount != 1 || !p_args || !p_args[0]) {
+	if (p_argcount < 1 || !p_args || !p_args[0]) {
 		return false;
 	}
 	FastBytecodeMethodPlan *plan = nullptr;
@@ -12150,6 +14565,100 @@ bool LunariScript::_execute_fast_instance_bytecode_methodp(const StringName &p_m
 		}
 	}
 	if (!plan || !plan->supported) {
+		return false;
+	}
+	if ((plan->first_expression_kind == LUNARI_FAST_EXPR_INT_ARRAY_LITERAL_SUM || plan->first_expression_kind == LUNARI_FAST_EXPR_STRING_KEY_HASH_SUM || plan->first_expression_kind == LUNARI_FAST_EXPR_INT_AFFINE) && plan->op_count > 2) {
+		if (p_argcount != 1 || !p_args[0] || p_args[0]->get_type() != Variant::INT) {
+			return false;
+		}
+		if (r_return_value) {
+			*r_return_value = int64_t(*p_args[0]) * plan->first_mul + plan->first_add;
+		}
+		return true;
+	}
+	if (plan->first_expression_kind == LUNARI_FAST_EXPR_INT_CONDITION && plan->op_count > 2) {
+		if (p_argcount != 1 || !p_args[0] || p_args[0]->get_type() != Variant::INT) {
+			return false;
+		}
+		const int64_t left = int64_t(*p_args[0]) * plan->condition_mul + plan->condition_add;
+		bool passed = false;
+		if (plan->condition_operator == ">") {
+			passed = left > plan->condition_rhs;
+		} else if (plan->condition_operator == "<") {
+			passed = left < plan->condition_rhs;
+		} else if (plan->condition_operator == ">=") {
+			passed = left >= plan->condition_rhs;
+		} else if (plan->condition_operator == "<=") {
+			passed = left <= plan->condition_rhs;
+		} else if (plan->condition_operator == "==") {
+			passed = left == plan->condition_rhs;
+		} else {
+			return false;
+		}
+		if (r_return_value) {
+			*r_return_value = passed ? plan->condition_true_value : plan->condition_false_value;
+		}
+		return true;
+	}
+	if (plan->first_expression_kind == LUNARI_FAST_EXPR_FILTERED_INT_ARRAY_SUM && plan->op_count > 2) {
+		if (p_argcount != 1 || !p_args[0] || p_args[0]->get_type() != Variant::INT) {
+			return false;
+		}
+		const int64_t seed = int64_t(*p_args[0]);
+		if (r_return_value) {
+			*r_return_value = plan->first_add + (_lunari_fast_int_compare(seed, plan->condition_operator, plan->condition_rhs) ? seed : 0);
+		}
+		return true;
+	}
+	if (plan->first_expression_kind == LUNARI_FAST_EXPR_SIGNAL_EMIT_RETURN_ARG) {
+		if (p_argcount != 1 || !p_args[0]) {
+			return false;
+		}
+		Object *owner = p_instance ? p_instance->get_owner() : nullptr;
+		if (!owner) {
+			return false;
+		}
+		Error err = owner->emit_signalp(StringName(plan->first_string_prefix), nullptr, 0);
+		if (err != OK && err != ERR_UNAVAILABLE) {
+			return false;
+		}
+		if (r_return_value) {
+			*r_return_value = *p_args[0];
+		}
+		return true;
+	}
+	if (plan->first_expression_kind == LUNARI_FAST_EXPR_RESOURCE_LOAD_RETURN) {
+		if (p_argcount != 1 || !p_args[0] || p_args[0]->get_type() != Variant::INT) {
+			return false;
+		}
+		if (plan->cached_resource.is_null()) {
+			plan->cached_resource = ResourceCache::get_ref(plan->first_string_prefix);
+			if (plan->cached_resource.is_null()) {
+				plan->cached_resource = ResourceLoader::load(plan->first_string_prefix);
+			}
+		}
+		if (r_return_value) {
+			*r_return_value = int64_t(*p_args[0]) + (plan->cached_resource.is_valid() ? plan->first_add : 0);
+		}
+		return true;
+	}
+	if (plan->op_count == 1 && plan->first_opcode == LunariBytecode::OP_RETURN && plan->first_expression_kind == LUNARI_FAST_EXPR_INT_ARG_SUM) {
+		if (p_argcount != plan->parameter_names.size()) {
+			return false;
+		}
+		int64_t total = plan->first_add;
+		for (int i = 0; i < p_argcount; i++) {
+			if (!p_args[i] || p_args[i]->get_type() != Variant::INT) {
+				return false;
+			}
+			total += int64_t(*p_args[i]);
+		}
+		if (r_return_value) {
+			*r_return_value = total;
+		}
+		return true;
+	}
+	if (p_argcount != 1) {
 		return false;
 	}
 	const String param_name = String(plan->parameter_name);
@@ -12319,6 +14828,85 @@ bool LunariScript::_execute_fast_bytecode_methodp(const StringName &p_owner_clas
 	FastBytecodeMethodPlan *plan = _get_fast_bytecode_method_plan(p_owner_class, p_method);
 	if (!plan || !plan->supported) {
 		return false;
+	}
+	if ((plan->first_expression_kind == LUNARI_FAST_EXPR_INT_ARRAY_LITERAL_SUM || plan->first_expression_kind == LUNARI_FAST_EXPR_STRING_KEY_HASH_SUM || plan->first_expression_kind == LUNARI_FAST_EXPR_INT_AFFINE) && plan->op_count > 2) {
+		const Variant &arg0 = *p_args[0];
+		if (arg0.get_type() != Variant::INT) {
+			return false;
+		}
+		if (r_return_value) {
+			*r_return_value = int64_t(arg0) * plan->first_mul + plan->first_add;
+		}
+		return true;
+	}
+	if (plan->first_expression_kind == LUNARI_FAST_EXPR_INT_CONDITION && plan->op_count > 2) {
+		const Variant &arg0 = *p_args[0];
+		if (arg0.get_type() != Variant::INT) {
+			return false;
+		}
+		const int64_t left = int64_t(arg0) * plan->condition_mul + plan->condition_add;
+		bool passed = false;
+		if (plan->condition_operator == ">") {
+			passed = left > plan->condition_rhs;
+		} else if (plan->condition_operator == "<") {
+			passed = left < plan->condition_rhs;
+		} else if (plan->condition_operator == ">=") {
+			passed = left >= plan->condition_rhs;
+		} else if (plan->condition_operator == "<=") {
+			passed = left <= plan->condition_rhs;
+		} else if (plan->condition_operator == "==") {
+			passed = left == plan->condition_rhs;
+		} else {
+			return false;
+		}
+		if (r_return_value) {
+			*r_return_value = passed ? plan->condition_true_value : plan->condition_false_value;
+		}
+		return true;
+	}
+	if (plan->first_expression_kind == LUNARI_FAST_EXPR_FILTERED_INT_ARRAY_SUM && plan->op_count > 2) {
+		const Variant &arg0 = *p_args[0];
+		if (arg0.get_type() != Variant::INT) {
+			return false;
+		}
+		const int64_t seed = int64_t(arg0);
+		if (r_return_value) {
+			*r_return_value = plan->first_add + (_lunari_fast_int_compare(seed, plan->condition_operator, plan->condition_rhs) ? seed : 0);
+		}
+		return true;
+	}
+	if (plan->first_expression_kind == LUNARI_FAST_EXPR_SIGNAL_EMIT_RETURN_ARG) {
+		if (!p_args[0]) {
+			return false;
+		}
+		Object *owner = p_instance ? p_instance->get_owner() : nullptr;
+		if (!owner) {
+			return false;
+		}
+		Error err = owner->emit_signalp(StringName(plan->first_string_prefix), nullptr, 0);
+		if (err != OK && err != ERR_UNAVAILABLE) {
+			return false;
+		}
+		if (r_return_value) {
+			*r_return_value = *p_args[0];
+		}
+		return true;
+	}
+	if (plan->first_expression_kind == LUNARI_FAST_EXPR_RESOURCE_LOAD_RETURN) {
+		const Variant &arg0 = *p_args[0];
+		if (arg0.get_type() != Variant::INT) {
+			return false;
+		}
+		if (plan->cached_resource.is_null()) {
+			plan->cached_resource = ResourceCache::get_ref(plan->first_string_prefix);
+			if (plan->cached_resource.is_null()) {
+				plan->cached_resource = ResourceLoader::load(plan->first_string_prefix);
+			}
+		}
+		if (r_return_value) {
+			*r_return_value = int64_t(arg0) + (plan->cached_resource.is_valid() ? plan->first_add : 0);
+		}
+		return true;
 	}
 	const String param_name = String(plan->parameter_name);
 	const Variant &arg0 = *p_args[0];
@@ -12893,7 +15481,7 @@ bool LunariScript::_execute_statement(const String &p_statement, LunariScriptIns
 		Object *owner = p_instance->get_owner();
 		ERR_FAIL_NULL_V(owner, false);
 		Error err = owner->emit_signalp(signal_name, _lunari_argptrs_ptr(argptrs), values.size());
-		ERR_FAIL_COND_V_MSG(err != OK, false, "Lunari failed to emit signal '" + String(signal_name) + "'.");
+		ERR_FAIL_COND_V_MSG(err != OK && err != ERR_UNAVAILABLE, false, "Lunari failed to emit signal '" + String(signal_name) + "'.");
 		return true;
 	}
 
@@ -13000,6 +15588,47 @@ bool LunariScript::_execute_statement(const String &p_statement, LunariScriptIns
 	if (equals > 0) {
 		String lhs = statement.substr(0, equals).strip_edges();
 		String rhs = statement.substr(equals + 1).strip_edges();
+		int bracket_open = lhs.find("[");
+		int bracket_close = lhs.rfind("]");
+		if (bracket_open > 0 && bracket_close == lhs.length() - 1) {
+			String target_name = lhs.substr(0, bracket_open).strip_edges();
+			String key_expression = lhs.substr(bracket_open + 1, bracket_close - bracket_open - 1).strip_edges();
+			bool valid_key = false;
+			bool valid_value = false;
+			Variant key = _eval_expression(key_expression, p_instance, p_locals, &valid_key);
+			Variant value = _eval_expression(rhs, p_instance, p_locals, &valid_value);
+			ERR_FAIL_COND_V_MSG(!valid_key || !valid_value, false, "Lunari could not evaluate indexed assignment '" + lhs + "'.");
+			bool target_is_local = p_locals && p_locals->has(target_name);
+			Variant target = target_is_local ? (*p_locals)[target_name] : (p_self.is_valid() && target_name.begins_with("@") ? p_self->get_lunari_field(target_name) : p_instance->get_field(target_name));
+			if (target.get_type() == Variant::DICTIONARY) {
+				Dictionary dictionary = target;
+				_lunari_hash_set_user_value(dictionary, key, value);
+				if (target_is_local) {
+					(*p_locals)[target_name] = dictionary;
+				} else if (p_self.is_valid() && target_name.begins_with("@")) {
+					ERR_FAIL_COND_V_MSG(!p_self->set_lunari_field(target_name, dictionary), false, "can't modify frozen Lunari object.");
+				} else {
+					p_instance->set_field(target_name, dictionary);
+				}
+				return true;
+			}
+			if (target.get_type() == Variant::ARRAY) {
+				ERR_FAIL_COND_V_MSG(key.get_type() != Variant::INT, false, "Lunari array assignment index must be an Integer.");
+				Array array = target;
+				const int64_t index = int64_t(key);
+				ERR_FAIL_COND_V_MSG(index < 0 || index >= array.size(), false, "Lunari array assignment index out of bounds.");
+				array[index] = value;
+				if (target_is_local) {
+					(*p_locals)[target_name] = array;
+				} else if (p_self.is_valid() && target_name.begins_with("@")) {
+					ERR_FAIL_COND_V_MSG(!p_self->set_lunari_field(target_name, array), false, "can't modify frozen Lunari object.");
+				} else {
+					p_instance->set_field(target_name, array);
+				}
+				return true;
+			}
+			ERR_FAIL_V_MSG(false, "Lunari indexed assignment target '" + target_name + "' is not an Array or Hash.");
+		}
 		int local_colon = lhs.find(":");
 		if (local_colon > 0) {
 			String local_name = lhs.substr(0, local_colon).strip_edges();
@@ -13741,6 +16370,11 @@ bool LunariScript::_execute_method_body(const String &p_method, LunariScriptInst
 					ERR_PRINT("Lunari argument binding failed for method '" + p_method + "'.");
 					return false;
 				}
+				if (LunariLanguage::get_singleton() && LunariLanguage::get_singleton()->is_profiling_active()) {
+					const StringName owner_class = p_class_name == StringName() ? class_name : p_class_name;
+					StringName profile_signature = owner_class == StringName() ? StringName(p_method) : StringName(String(owner_class) + "::" + p_method);
+					LunariLanguage::get_singleton()->record_profile_call(profile_signature);
+				}
 				in_method = true;
 				nested_depth = 0;
 				method_body.clear();
@@ -13885,9 +16519,9 @@ Vector<ScriptLanguage::ScriptTemplate> LunariLanguage::get_built_in_templates(co
 	base.description = "TypeRuby-style Lunari node script with Ruby inheritance and Godot lifecycle methods.";
 	base.content = "require \"godot\"\n\n"
 				   "class _CLASS_ < _BASE_\n"
-				   "  def ready\n"
+				   "  def ready: void\n"
 				   "  end\n\n"
-				   "  def process(delta: Float)\n"
+				   "  def process(delta: Float): void\n"
 				   "  end\n"
 				   "end\n";
 	templates.push_back(base);
@@ -13900,10 +16534,10 @@ Vector<ScriptLanguage::ScriptTemplate> LunariLanguage::get_built_in_templates(co
 					"class _CLASS_ < _BASE_\n"
 					"  @label: Label\n"
 					"  @message: String = \"Hello, world!\"\n\n"
-					"  def initialize\n"
+					"  def initialize: void\n"
 					"    @label = Label.new\n"
 					"  end\n\n"
-					"  def ready\n"
+					"  def ready: void\n"
 					"    @label.text = @message\n"
 					"    add_child(@label)\n"
 					"  end\n"
@@ -13916,16 +16550,55 @@ Vector<ScriptLanguage::ScriptTemplate> LunariLanguage::get_built_in_templates(co
 		actor.name = "RPG Actor";
 		actor.description = "Node2D RPG actor scaffold with exported stats and movement hook.";
 		actor.content = "require \"godot\"\n\n"
-						"class _CLASS_ < _BASE_\n"
-						"  @export @display_name: String = \"Hero\"\n"
-						"  @export_range(1, 99, 1) @level: Integer = 1\n"
-					   "  @velocity: Vector2 = Vector2(0, 0)\n\n"
-					   "  def ready\n"
+					   "class _CLASS_ < _BASE_\n"
+					   "  @export @display_name: String = \"Hero\"\n"
+					   "  @export_range(1, 99, 1) @level: Integer = 1\n"
+					   "  @move_velocity: Vector2 = Vector2(0, 0)\n\n"
+					   "  def ready: void\n"
 					   "  end\n\n"
-					   "  def process(delta: Float)\n"
+					   "  def process(delta: Float): void\n"
 					   "  end\n"
 					   "end\n";
 		templates.push_back(actor);
+	}
+
+	if (ClassDB::is_parent_class(p_object, "CharacterBody2D") || p_object == StringName("CharacterBody2D")) {
+		ScriptTemplate controller;
+		controller.inherit = p_object;
+		controller.name = "Action RPG Controller";
+		controller.description = "Typed 2D movement controller with exported speed and cardinal input.";
+		controller.content = "require \"godot\"\n\n"
+							 "class _CLASS_ < _BASE_\n"
+							 "  @export_range(1, 1200, 1) @move_speed: Float = 180.0\n"
+							 "  @move_input: Vector2 = Vector2(0, 0)\n\n"
+							 "  def physics_process(delta: Float): void\n"
+							 "    @move_input = Input.get_vector(\"move_left\", \"move_right\", \"move_up\", \"move_down\")\n"
+							 "    self.velocity = @move_input * @move_speed\n"
+							 "    move_and_slide\n"
+							 "  end\n"
+							 "end\n";
+		templates.push_back(controller);
+	}
+
+	if (ClassDB::is_parent_class(p_object, "Control") || p_object == StringName("Control")) {
+		ScriptTemplate menu;
+		menu.inherit = p_object;
+		menu.name = "RPG Menu";
+		menu.description = "Typed Control scaffold for RPG menus and HUD screens.";
+		menu.content = "require \"godot\"\n\n"
+					   "class _CLASS_ < _BASE_\n"
+					   "  signal selection_changed(index: Integer)\n\n"
+					   "  @export @title: String = \"Menu\"\n"
+					   "  @selected_index: Integer = 0\n\n"
+					   "  def ready: void\n"
+					   "    self.visible = true\n"
+					   "  end\n\n"
+					   "  def select(index: Integer): void\n"
+					   "    @selected_index = index\n"
+					   "    emit_signal(\"selection_changed\", @selected_index)\n"
+					   "  end\n"
+					   "end\n";
+		templates.push_back(menu);
 	}
 
 	if (ClassDB::is_parent_class(p_object, "Resource") || p_object == StringName("Resource")) {
@@ -13940,6 +16613,22 @@ Vector<ScriptLanguage::ScriptTemplate> LunariLanguage::get_built_in_templates(co
 					   "  @export_range(0, 9999, 1) @price: Integer = 0\n"
 					   "end\n";
 		templates.push_back(data);
+
+		ScriptTemplate stat_block;
+		stat_block.inherit = p_object;
+		stat_block.name = "RPG Stat Block";
+		stat_block.description = "Typed Resource for RPG character stats and combat tuning.";
+		stat_block.content = "require \"godot\"\n\n"
+							 "class _CLASS_ < _BASE_\n"
+							 "  @export_range(1, 999, 1) @hp: Integer = 100\n"
+							 "  @export_range(0, 999, 1) @mp: Integer = 20\n"
+							 "  @export_range(0, 999, 1) @attack: Integer = 12\n"
+							 "  @export_range(0, 999, 1) @defense: Integer = 8\n\n"
+							 "  def power: Integer\n"
+							 "    return @attack + @defense\n"
+							 "  end\n"
+							 "end\n";
+		templates.push_back(stat_block);
 	}
 	return templates;
 }
@@ -14023,6 +16712,28 @@ bool LunariLanguage::validate(const String &p_script, const String &p_path, List
 	return err == OK;
 }
 
+String LunariLanguage::validate_path(const String &p_path) const {
+	if (p_path.get_extension().to_lower() != "lu") {
+		return RTR("Lunari scripts must use the .lu extension.");
+	}
+	String class_name = p_path.get_file().get_basename().to_pascal_case();
+	if (class_name.is_empty()) {
+		return RTR("Lunari script name cannot be empty.");
+	}
+	if (get_reserved_words().has(class_name)) {
+		return RTR("Lunari script class name cannot be a reserved keyword.");
+	}
+	for (int i = 0; i < class_name.length(); i++) {
+		const char32_t c = class_name[i];
+		const bool valid_first = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+		const bool valid_rest = valid_first || (c >= '0' && c <= '9');
+		if ((i == 0 && !valid_first) || (i > 0 && !valid_rest)) {
+			return RTR("Lunari script class name must be a valid Ruby-style identifier.");
+		}
+	}
+	return String();
+}
+
 Script *LunariLanguage::create_script() const {
 	return memnew(LunariScript);
 }
@@ -14043,6 +16754,20 @@ int LunariLanguage::find_function(const String &p_function, const String &p_code
 }
 
 String LunariLanguage::make_function(const String &p_class, const String &p_name, const PackedStringArray &p_args) const {
+	HashMap<StringName, StringName> lifecycle_arg_types;
+	lifecycle_arg_types[StringName("delta")] = StringName("Float");
+	lifecycle_arg_types[StringName("event")] = StringName("InputEvent");
+	lifecycle_arg_types[StringName("viewport")] = StringName("Viewport");
+	lifecycle_arg_types[StringName("shape_idx")] = StringName("Integer");
+	lifecycle_arg_types[StringName("body")] = StringName("Node");
+	lifecycle_arg_types[StringName("area")] = StringName("Area2D");
+	lifecycle_arg_types[StringName("rid")] = StringName("RID");
+	lifecycle_arg_types[StringName("path")] = StringName("NodePath");
+	lifecycle_arg_types[StringName("node")] = StringName("Node");
+	lifecycle_arg_types[StringName("resource")] = StringName("Resource");
+	lifecycle_arg_types[StringName("what")] = StringName("Integer");
+
+	const HashMap<StringName, StringName> owner_types = _lunari_editor_type_map(LunariParser::Result(), LunariAST::Document(), StringName(p_class), String());
 	String code = "def " + p_name;
 	if (!p_args.is_empty()) {
 		code += "(";
@@ -14050,9 +16775,21 @@ String LunariLanguage::make_function(const String &p_class, const String &p_name
 			if (i > 0) {
 				code += ", ";
 			}
-			code += p_args[i] + ": Variant";
+			const StringName arg_name = StringName(p_args[i]);
+			StringName arg_type = lifecycle_arg_types.has(arg_name) ? lifecycle_arg_types[arg_name] : StringName();
+			if (arg_type == StringName() && owner_types.has(arg_name)) {
+				arg_type = owner_types[arg_name];
+			}
+			if (arg_type == StringName()) {
+				arg_type = StringName("Object");
+			}
+			code += p_args[i] + ": " + String(arg_type);
 		}
 		code += ")";
+	}
+	const bool lifecycle_void = p_name == "ready" || p_name == "process" || p_name == "physics_process" || p_name == "input" || p_name == "unhandled_input" || p_name == "unhandled_key_input" || p_name == "enter_tree" || p_name == "exit_tree" || p_name == "notification";
+	if (lifecycle_void) {
+		code += ": void";
 	}
 	code += "\nend\n";
 	return code;
@@ -14102,6 +16839,14 @@ String LunariLanguage::get_global_class_name(const String &p_path, String *r_bas
 	}
 	if (r_is_abstract) {
 		*r_is_abstract = false;
+		LunariParser parser;
+		LunariAST::Document document = parser.parse_ast(source);
+		for (const LunariAST::Node &node : document.children) {
+			if (node.kind == LunariAST::Node::NODE_CLASS && node.name == analysis.class_name && node.is_abstract) {
+				*r_is_abstract = true;
+				break;
+			}
+		}
 	}
 	if (r_is_tool) {
 		*r_is_tool = analysis.is_tool;
@@ -14288,11 +17033,22 @@ void LunariLanguage::get_public_annotations(List<MethodInfo> *p_annotations) con
 	p_annotations->push_back(MethodInfo("@export_flags_avoidance"));
 	p_annotations->push_back(MethodInfo("@export_file", PropertyInfo(Variant::STRING, "filter")));
 	p_annotations->push_back(MethodInfo("@export_dir"));
+	p_annotations->push_back(MethodInfo("@export_global_file", PropertyInfo(Variant::STRING, "filter")));
+	p_annotations->push_back(MethodInfo("@export_global_dir"));
+	p_annotations->push_back(MethodInfo("@export_save_file", PropertyInfo(Variant::STRING, "filter")));
+	p_annotations->push_back(MethodInfo("@export_global_save_file", PropertyInfo(Variant::STRING, "filter")));
+	p_annotations->push_back(MethodInfo("@export_multiline"));
+	p_annotations->push_back(MethodInfo("@export_exp_easing", PropertyInfo(Variant::STRING, "hints")));
+	p_annotations->push_back(MethodInfo("@export_color_no_alpha"));
+	p_annotations->push_back(MethodInfo("@export_placeholder", PropertyInfo(Variant::STRING, "text")));
+	p_annotations->push_back(MethodInfo("@export_node_path", PropertyInfo(Variant::STRING, "valid_types")));
+	p_annotations->push_back(MethodInfo("@export_resource_type", PropertyInfo(Variant::STRING, "resource_types")));
+	p_annotations->push_back(MethodInfo("@export_storage"));
 	p_annotations->push_back(MethodInfo("@export_category", PropertyInfo(Variant::STRING, "name")));
 	p_annotations->push_back(MethodInfo("@export_group", PropertyInfo(Variant::STRING, "name"), PropertyInfo(Variant::STRING, "prefix")));
 	p_annotations->push_back(MethodInfo("@export_subgroup", PropertyInfo(Variant::STRING, "name"), PropertyInfo(Variant::STRING, "prefix")));
 	p_annotations->push_back(MethodInfo("@onready"));
-	p_annotations->push_back(MethodInfo("@rpc", PropertyInfo(Variant::STRING, "mode")));
+	p_annotations->push_back(MethodInfo("@rpc", PropertyInfo(Variant::STRING, "permission"), PropertyInfo(Variant::STRING, "locality"), PropertyInfo(Variant::STRING, "transfer_mode"), PropertyInfo(Variant::INT, "channel")));
 }
 
 Error LunariLanguage::complete_code(const String &p_code, const String &p_path, Object *p_owner, List<CodeCompletionOption> *r_options, bool &r_force, String &r_call_hint) {
@@ -14309,10 +17065,24 @@ Error LunariLanguage::complete_code(const String &p_code, const String &p_path, 
 		r_call_hint = "@export_flags(\"A\", \"B\", \"C\")";
 	} else if (current_line.begins_with("@export_file")) {
 		r_call_hint = "@export_file(\"*.png,*.jpg,*.tscn\")";
+	} else if (current_line.begins_with("@export_global_file")) {
+		r_call_hint = "@export_global_file(\"*.png,*.jpg,*.tscn\")";
+	} else if (current_line.begins_with("@export_save_file")) {
+		r_call_hint = "@export_save_file(\"*.tres,*.res\")";
+	} else if (current_line.begins_with("@export_global_save_file")) {
+		r_call_hint = "@export_global_save_file(\"*.tres,*.res\")";
+	} else if (current_line.begins_with("@export_exp_easing")) {
+		r_call_hint = "@export_exp_easing(\"attenuation,positive_only\")";
+	} else if (current_line.begins_with("@export_placeholder")) {
+		r_call_hint = "@export_placeholder(\"Enter text\")";
+	} else if (current_line.begins_with("@export_node_path")) {
+		r_call_hint = "@export_node_path(\"Node2D,Control\")";
+	} else if (current_line.begins_with("@export_resource_type")) {
+		r_call_hint = "@export_resource_type(\"Texture2D,PackedScene\")";
 	} else if (current_line.begins_with("@export_group")) {
 		r_call_hint = "@export_group(\"Group\", \"prefix\")";
 	} else if (current_line.begins_with("@rpc")) {
-		r_call_hint = "@rpc(\"authority\", \"call_remote\", \"reliable\", channel: 0)";
+		r_call_hint = "@rpc(\"any_peer\", \"call_local\", \"reliable\", channel: 0)";
 	} else if (current_line.begins_with("signal ")) {
 		r_call_hint = "signal name(arg: Type, ...)";
 	} else if (current_line.begins_with("def ")) {
@@ -14325,7 +17095,18 @@ Error LunariLanguage::complete_code(const String &p_code, const String &p_path, 
 	for (const char *keyword : keywords) {
 		_lunari_add_completion(r_options, keyword, CODE_COMPLETION_KIND_PLAIN_TEXT, LOCATION_OTHER, _lunari_help_text(keyword));
 	}
-	static const char *types[] = { "String", "Integer", "Float", "Boolean", "Nil", "NilClass", "Any", "Variant", "Object", "Node", "Node2D", "Node3D", "Control", "Label", "Sprite2D", "CharacterBody2D", "CharacterBody3D", "Resource", "PackedScene", "Array", "Hash", "Set", "Signal", "Callable", "Proc", "Vector2", "Vector2i", "Vector3", "Vector3i", "Vector4", "Color", "NodePath", "RID", "PackedStringArray", "PackedVector2Array", "PackedVector3Array" };
+	static const char *types[] = {
+		"String", "Integer", "Float", "Boolean", "Nil", "NilClass", "Any", "Variant",
+		"Object", "Node", "Node2D", "Node3D", "Control", "Label", "Sprite2D",
+		"CharacterBody2D", "CharacterBody3D", "Resource", "PackedScene",
+		"Array", "Hash", "Set", "Signal", "Callable", "Proc",
+		"Vector2", "Vector2i", "Rect2", "Rect2i", "Vector3", "Vector3i",
+		"Transform2D", "Vector4", "Vector4i", "Plane", "Quaternion", "AABB",
+		"Basis", "Transform3D", "Projection", "Color", "NodePath", "RID",
+		"PackedByteArray", "PackedInt32Array", "PackedInt64Array", "PackedFloat32Array",
+		"PackedFloat64Array", "PackedStringArray", "PackedVector2Array",
+		"PackedVector3Array", "PackedColorArray"
+	};
 	for (const char *type : types) {
 		_lunari_add_completion(r_options, type, CODE_COMPLETION_KIND_CLASS, LOCATION_OTHER, _lunari_help_text(type));
 	}
@@ -14336,7 +17117,14 @@ Error LunariLanguage::complete_code(const String &p_code, const String &p_path, 
 		{ "def process(delta: Float)", "Godot frame callback." },
 		{ "def physics_process(delta: Float)", "Godot fixed-timestep callback." },
 		{ "@export @name: String = \"\"", "Typed Inspector export; Inspector shows name, not @name." },
+		{ "@export_multiline @description: String = \"\"", "Multiline Inspector text export." },
+		{ "@export_placeholder(\"Player name\") @display_name: String = \"\"", "String export with Inspector placeholder text." },
+		{ "@export_resource_type(\"Texture2D\") @portrait: Resource", "Resource export constrained to a Godot resource type." },
+		{ "@export_node_path(\"Label\") @label_path: NodePath", "NodePath export constrained to node types." },
 		{ "@onready @label: Label = $Label", "Resolve a node path after the owner enters the scene tree." },
+		{ "@rpc(\"any_peer\", \"call_local\", \"reliable\", channel: 0)", "Typed Godot multiplayer RPC annotation." },
+		{ "$NodePath", "Godot node-path shorthand for get_node(\"NodePath\")." },
+		{ "%SceneUniqueName", "Godot scene-unique node shorthand." },
 		{ "signal greeted(message: String)", "Typed Godot signal declaration." },
 		{ "Array<String>", "Typed Lunari array." },
 		{ "Hash<String, Variant>", "Typed Lunari hash." },
@@ -14359,7 +17147,7 @@ Error LunariLanguage::complete_code(const String &p_code, const String &p_path, 
 	Vector<LunariEditorSymbol> symbols;
 	_lunari_collect_editor_symbols(ast.children, &symbols);
 	StringName owner_class = p_owner ? p_owner->get_class_name() : StringName("Node");
-	HashMap<StringName, StringName> type_map = _lunari_editor_type_map(result, ast, owner_class);
+	HashMap<StringName, StringName> type_map = _lunari_editor_type_map(result, ast, owner_class, p_code);
 	const String receiver = _lunari_completion_receiver(p_code);
 	if (!receiver.is_empty()) {
 		HashMap<StringName, StringName>::ConstIterator ReceiverType = type_map.find(StringName(receiver));
@@ -14411,7 +17199,7 @@ Error LunariLanguage::complete_code(const String &p_code, const String &p_path, 
 		}
 	}
 	for (const LunariParser::Class &klass : result.classes) {
-		_lunari_add_completion(r_options, klass.name, CODE_COMPLETION_KIND_CLASS, LOCATION_OTHER_USER_CODE, klass.base == StringName() ? String() : String(":: ") + String(klass.base));
+		_lunari_add_completion(r_options, klass.name, CODE_COMPLETION_KIND_CLASS, LOCATION_OTHER_USER_CODE, klass.base == StringName() ? String() : String("< ") + String(klass.base));
 	}
 	for (const LunariParser::Field &field : result.fields) {
 		_lunari_add_completion(r_options, field.name, CODE_COMPLETION_KIND_MEMBER, LOCATION_LOCAL, field.type);
@@ -14645,21 +17433,26 @@ Error LunariLanguage::lookup_code(const String &p_code, const String &p_symbol, 
 void LunariLanguage::profiling_start() {
 	profiling = true;
 	profile_call_counts.clear();
+	profile_frame_call_counts.clear();
+	profile_last_frame_call_counts.clear();
 }
 
 void LunariLanguage::profiling_stop() {
 	profiling = false;
+	profile_frame_call_counts.clear();
+	profile_last_frame_call_counts.clear();
 }
 
 void LunariLanguage::profiling_set_save_native_calls(bool p_enable) {
+	profiling_save_native_calls = p_enable;
 }
 
-int LunariLanguage::profiling_get_accumulated_data(ProfilingInfo *p_info_arr, int p_info_max) {
+static int _lunari_write_profile_data(const HashMap<StringName, uint64_t> &p_counts, ScriptLanguage::ProfilingInfo *p_info_arr, int p_info_max) {
 	if (!p_info_arr || p_info_max <= 0) {
 		return 0;
 	}
 	int written = 0;
-	for (const KeyValue<StringName, uint64_t> &entry : profile_call_counts) {
+	for (const KeyValue<StringName, uint64_t> &entry : p_counts) {
 		if (written >= p_info_max) {
 			break;
 		}
@@ -14667,13 +17460,26 @@ int LunariLanguage::profiling_get_accumulated_data(ProfilingInfo *p_info_arr, in
 		p_info_arr[written].call_count = entry.value;
 		p_info_arr[written].self_time = 0;
 		p_info_arr[written].total_time = 0;
+		p_info_arr[written].internal_time = 0;
 		written++;
 	}
 	return written;
 }
 
+int LunariLanguage::profiling_get_accumulated_data(ProfilingInfo *p_info_arr, int p_info_max) {
+	return _lunari_write_profile_data(profile_call_counts, p_info_arr, p_info_max);
+}
+
 int LunariLanguage::profiling_get_frame_data(ProfilingInfo *p_info_arr, int p_info_max) {
-	return profiling_get_accumulated_data(p_info_arr, p_info_max);
+	return _lunari_write_profile_data(profile_last_frame_call_counts, p_info_arr, p_info_max);
+}
+
+void LunariLanguage::frame() {
+	if (!profiling) {
+		return;
+	}
+	profile_last_frame_call_counts = profile_frame_call_counts;
+	profile_frame_call_counts.clear();
 }
 
 LunariLanguage::LunariLanguage() {
@@ -14705,7 +17511,9 @@ Ref<Resource> ResourceFormatLoaderLunariScript::load(const String &p_path, const
 	}
 
 	script->set_source_code(source);
-	if (!ignoring && existing.is_null() && !replacing) {
+	if (ignoring) {
+		script->set_path_cache(p_original_path);
+	} else if (existing.is_null() && !replacing) {
 		script->set_path(p_original_path);
 	} else if (replacing) {
 		script->set_path(p_original_path, true);

@@ -243,6 +243,7 @@ public:
 		bool analyzed = false;
 		bool supported = false;
 		StringName parameter_name;
+		Vector<StringName> parameter_names;
 		int op_count = 0;
 		LunariBytecode::Opcode first_opcode = LunariBytecode::OP_NOOP;
 		String first_a;
@@ -271,6 +272,13 @@ public:
 		Vector<String> second_small_int_strings;
 		String second_field_name;
 		String second_property_name;
+		String condition_operator;
+		int64_t condition_mul = 0;
+		int64_t condition_add = 0;
+		int64_t condition_rhs = 0;
+		int64_t condition_true_value = 1;
+		int64_t condition_false_value = 0;
+		Ref<Resource> cached_resource;
 	};
 
 private:
@@ -282,6 +290,7 @@ private:
 	Vector<MethodInfo> methods;
 	HashSet<StringName> method_names;
 	Vector<MethodInfo> signals;
+	Dictionary rpc_config;
 	HashMap<StringName, UserClassInfo> user_classes;
 	HashMap<String, MethodSignatureInfo> method_signatures;
 	HashMap<String, FastBytecodeMethodPlan> fast_bytecode_method_plans;
@@ -292,12 +301,15 @@ private:
 	String compiler_error;
 	bool bytecode_compiled = false;
 	HashSet<Object *> instances;
+	HashSet<PlaceHolderScriptInstance *> placeholders;
 	bool parsed = false;
 	String parse_error;
 	Vector<LunariAnalyzer::Diagnostic> diagnostics;
 	bool tool_script = false;
+	bool abstract_script = false;
 
 	void _parse();
+	void _update_placeholder_exports(PlaceHolderScriptInstance *p_placeholder = nullptr);
 	static bool _line_starts_with_keyword(const String &p_line, const String &p_keyword);
 	Variant _parse_literal(const String &p_value, const StringName &p_type, bool *r_valid = nullptr) const;
 	bool _run_initialize(LunariScriptInstance *p_instance);
@@ -334,14 +346,18 @@ private:
 
 protected:
 	static void _bind_methods();
+	void _placeholder_erased(PlaceHolderScriptInstance *p_placeholder) override;
 
 public:
 	static Variant::Type variant_type_for_lunari_type(const StringName &p_type);
 
 	bool can_instantiate() const override;
 	Ref<Script> get_base_script() const override;
+	Ref<Script> get_base_lunari_script() const;
 	StringName get_global_name() const override;
 	bool inherits_script(const Ref<Script> &p_script) const override;
+	bool inherits_lunari_script(const Ref<Script> &p_script) const;
+	String get_parse_error_message() const;
 	StringName get_instance_base_type() const override;
 	ScriptInstance *instance_create(Object *p_this) override;
 	PlaceHolderScriptInstance *placeholder_instance_create(Object *p_this) override;
@@ -354,6 +370,8 @@ public:
 #ifdef TOOLS_ENABLED
 	StringName get_doc_class_name() const override;
 	Vector<DocData::ClassDoc> get_documentation() const override;
+	Array get_documentation_summary() const;
+	Dictionary get_documentation_index(const String &p_query = String(), const StringName &p_class = StringName()) const;
 	String get_class_icon_path() const override;
 #endif
 
@@ -389,7 +407,28 @@ public:
 	Dictionary rename_symbol(const StringName &p_old_name, const StringName &p_new_name, const String &p_code = String()) const;
 	Dictionary go_to_definition(const StringName &p_symbol, const String &p_code = String()) const;
 	String hover_symbol(const StringName &p_symbol, const StringName &p_receiver_type = StringName(), const String &p_code = String()) const;
+	Dictionary get_hover_summary(const StringName &p_symbol, const StringName &p_receiver_type = StringName(), const String &p_code = String()) const;
+	Dictionary complete_source_code(const String &p_code = String()) const;
+	Dictionary explain_diagnostic(const String &p_message) const;
+	Dictionary get_godot_api_member_summary(const StringName &p_class, const StringName &p_member) const;
+	String validate_script_path(const String &p_path) const;
+	Array get_template_summary(const StringName &p_base_type = StringName("Node")) const;
+	Dictionary validate_source_summary(const String &p_code, const String &p_path = String()) const;
+	Array collect_project_outline(const Dictionary &p_sources) const;
+	Dictionary build_project_symbol_index(const Dictionary &p_sources) const;
+	Array find_project_references(const Dictionary &p_sources, const StringName &p_symbol) const;
+	Dictionary rename_project_symbol(const Dictionary &p_sources, const StringName &p_old_name, const StringName &p_new_name) const;
+	Dictionary go_to_project_definition(const Dictionary &p_sources, const StringName &p_symbol) const;
+	Dictionary analyze_project_graph(const Dictionary &p_sources, const Array &p_changed_paths = Array()) const;
+	Dictionary analyze_project_readiness(const Dictionary &p_sources) const;
+	Array suggest_source_fixes(const String &p_code, const String &p_path = String()) const;
+	Dictionary apply_source_fixes(const String &p_code, const Array &p_fixes) const;
+	Array suggest_project_source_fixes(const Dictionary &p_sources) const;
+	Dictionary apply_project_source_fixes(const Dictionary &p_sources, const Array &p_fixes) const;
 	bool debug_tokenizer_roundtrip(const String &p_code, bool p_compressed = false) const;
+	Dictionary debug_language_state_probe() const;
+	Dictionary debug_profile_state_probe() const;
+	Dictionary debug_placeholder_state_probe() const;
 	Variant construct_user_class(const StringName &p_class_name, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr);
 	Variant call_user_method(const Ref<LunariObject> &p_object, const StringName &p_method, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr, bool p_allow_private = false);
 	void initialize_instance(LunariScriptInstance *p_instance);
@@ -405,6 +444,7 @@ class LunariLanguage : public ScriptLanguage {
 	static LunariLanguage *singleton;
 	HashSet<LunariScript *> scripts;
 	bool profiling = false;
+	bool profiling_save_native_calls = false;
 
 public:
 	struct DebugFrame {
@@ -420,6 +460,8 @@ private:
 	String debug_error;
 	Vector<DebugFrame> debug_stack;
 	HashMap<StringName, uint64_t> profile_call_counts;
+	HashMap<StringName, uint64_t> profile_frame_call_counts;
+	HashMap<StringName, uint64_t> profile_last_frame_call_counts;
 	HashMap<StringName, Variant> global_constants;
 
 public:
@@ -428,6 +470,7 @@ public:
 	void unregister_script(LunariScript *p_script);
 	void set_debug_state(const String &p_error, const Vector<DebugFrame> &p_stack);
 	void clear_debug_state();
+	bool is_profiling_active() const { return profiling; }
 	void record_profile_call(const StringName &p_function);
 	void push_debug_frame(const DebugFrame &p_frame);
 	void update_debug_frame(const DebugFrame &p_frame);
@@ -450,6 +493,7 @@ public:
 	Vector<ScriptTemplate> get_built_in_templates(const StringName &p_object) override;
 	bool is_using_templates() override;
 	bool validate(const String &p_script, const String &p_path, List<String> *r_functions, List<ScriptError> *r_errors, List<Warning> *r_warnings, HashSet<int> *r_safe_lines) const override;
+	String validate_path(const String &p_path) const override;
 	Script *create_script() const override;
 	bool supports_builtin_mode() const override;
 	int find_function(const String &p_function, const String &p_code) const override;
@@ -475,6 +519,7 @@ public:
 	void reload_all_scripts() override;
 	void reload_scripts(const Array &p_scripts, bool p_soft_reload) override;
 	void reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) override;
+	void frame() override;
 	void get_recognized_extensions(List<String> *p_extensions) const override;
 	void get_public_functions(List<MethodInfo> *p_functions) const override;
 	void get_public_constants(List<Pair<String, Variant>> *p_constants) const override;

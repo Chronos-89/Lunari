@@ -311,6 +311,16 @@ void LunariGodotApi::_generate_class(const StringName &p_class) {
 	classes[p_class] = info;
 }
 
+void LunariGodotApi::_apply_metadata_patches() {
+	HashMap<StringName, ClassInfo>::Iterator InputClass = classes.find("Input");
+	if (InputClass) {
+		HashMap<StringName, Method>::Iterator GetVector = InputClass->value.methods.find("get_vector");
+		if (GetVector) {
+			GetVector->value.return_type = "Vector2";
+		}
+	}
+}
+
 void LunariGodotApi::generate() {
 	if (generated) {
 		return;
@@ -322,6 +332,7 @@ void LunariGodotApi::generate() {
 	for (uint32_t i = 0; i < class_names.size(); i++) {
 		_generate_class(class_names[i]);
 	}
+	_apply_metadata_patches();
 	write_snapshot();
 }
 
