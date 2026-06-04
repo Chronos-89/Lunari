@@ -6,10 +6,16 @@
 
 #include "lunari_godot_api.h"
 #include "lunari_script.h"
+#include "lunari_utility_functions.h"
 
 #include "core/debugger/engine_debugger.h"
 #include "core/debugger/script_debugger.h"
+#include "core/config/engine.h"
+#include "core/config/project_settings.h"
+#include "core/input/input.h"
+#include "core/input/input_map.h"
 #include "core/object/class_db.h"
+#include "core/templates/local_vector.h"
 #include "scene/main/node.h"
 
 static void _lunari_vm_finalize_frame(LunariVM::CallFrame &r_frame, LunariScript *p_script, LunariScriptInstance *p_instance, int p_line) {
@@ -40,6 +46,78 @@ static void _lunari_vm_update_debugger(const LunariVM::CallFrame &p_frame) {
 	}
 }
 
+static void _lunari_vm_sync_project_input_action(const StringName &p_action) {
+	InputMap *input_map = InputMap::get_singleton();
+	ProjectSettings *project_settings = ProjectSettings::get_singleton();
+	if (!input_map || !project_settings || input_map->has_action(p_action)) {
+		return;
+	}
+
+	const String setting_path = "input/" + String(p_action);
+	List<PropertyInfo> properties;
+	project_settings->get_property_list(&properties);
+	bool has_input_setting = false;
+	for (const PropertyInfo &property : properties) {
+		if (property.name == setting_path) {
+			has_input_setting = true;
+			break;
+		}
+	}
+	if (!has_input_setting) {
+		return;
+	}
+
+	Variant setting = GLOBAL_GET(setting_path);
+	if (setting.get_type() != Variant::DICTIONARY) {
+		return;
+	}
+
+	Dictionary action = setting;
+	const float deadzone = action.has("deadzone") ? float(action["deadzone"]) : InputMap::DEFAULT_DEADZONE;
+	input_map->add_action(p_action, deadzone);
+
+	if (!action.has("events") || action["events"].get_type() != Variant::ARRAY) {
+		return;
+	}
+	Array events = action["events"];
+	for (int i = 0; i < events.size(); i++) {
+		Ref<InputEvent> event = events[i];
+		if (event.is_valid()) {
+			input_map->action_add_event(p_action, event);
+		}
+	}
+}
+
+static StringName _lunari_vm_input_action_from_variant(const Variant &p_value) {
+	if (p_value.get_type() == Variant::STRING_NAME) {
+		return StringName(p_value);
+	}
+	return StringName(String(p_value));
+}
+
+static void _lunari_vm_sync_project_input_call(Object *p_object, const StringName &p_method, const Vector<Variant> &p_args) {
+	if (!p_object) {
+		return;
+	}
+	const StringName class_name = p_object->get_class_name();
+	if (class_name == StringName("Input")) {
+		if (p_method == "get_axis" && p_args.size() >= 2) {
+			_lunari_vm_sync_project_input_action(_lunari_vm_input_action_from_variant(p_args[0]));
+			_lunari_vm_sync_project_input_action(_lunari_vm_input_action_from_variant(p_args[1]));
+		} else if (p_method == "get_vector" && p_args.size() >= 4) {
+			for (int i = 0; i < 4; i++) {
+				_lunari_vm_sync_project_input_action(_lunari_vm_input_action_from_variant(p_args[i]));
+			}
+		} else if ((p_method == "is_action_pressed" || p_method == "is_action_just_pressed" || p_method == "is_action_just_released" || p_method == "get_action_strength" || p_method == "get_action_raw_strength") && p_args.size() >= 1) {
+			_lunari_vm_sync_project_input_action(_lunari_vm_input_action_from_variant(p_args[0]));
+		}
+		return;
+	}
+	if (class_name == StringName("InputMap") && (p_method == "has_action" || p_method == "action_get_deadzone" || p_method == "action_get_events" || p_method == "action_has_event" || p_method == "event_is_action") && p_args.size() >= 1) {
+		_lunari_vm_sync_project_input_action(_lunari_vm_input_action_from_variant(p_args[0]));
+	}
+}
+
 static bool _lunari_vm_debugger_active() {
 #ifdef DEBUG_ENABLED
 	return EngineDebugger::is_active() && EngineDebugger::get_script_debugger();
@@ -56,6 +134,36 @@ static bool _lunari_vm_truthy(const Variant &p_value) {
 		return bool(p_value);
 	}
 	return true;
+}
+
+static Array _lunari_vm_percent_word_array(const String &p_contents) {
+	Array words;
+	String current;
+	bool escaping = false;
+	for (int i = 0; i < p_contents.length(); i++) {
+		char32_t c = p_contents[i];
+		if (escaping) {
+			current += c;
+			escaping = false;
+			continue;
+		}
+		if (c == '\\') {
+			escaping = true;
+			continue;
+		}
+		if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+			if (!current.is_empty()) {
+				words.push_back(current);
+				current = String();
+			}
+			continue;
+		}
+		current += c;
+	}
+	if (!current.is_empty()) {
+		words.push_back(current);
+	}
+	return words;
 }
 
 static bool _lunari_vm_is_binary_prefix(char32_t p_char) {
@@ -97,6 +205,111 @@ static bool _lunari_vm_is_wrapped_in_parens(const String &p_expression) {
 		}
 	}
 	return depth == 0;
+}
+
+static bool _lunari_vm_eval_native_expression(LunariScript *p_script, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, Ref<LunariObject> p_self, const String &p_expression, Variant *r_value);
+
+static bool _lunari_vm_eval_interpolated_string(LunariScript *p_script, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, Ref<LunariObject> p_self, const String &p_text, String *r_value) {
+	String value;
+	for (int i = 0; i < p_text.length(); i++) {
+		char32_t c = p_text[i];
+		if (c == '\\' && i + 1 < p_text.length()) {
+			i++;
+			char32_t escaped = p_text[i];
+			if (escaped == 'n') {
+				value += "\n";
+			} else if (escaped == 't') {
+				value += "\t";
+			} else if (escaped == 'r') {
+				value += "\r";
+			} else {
+				value += escaped;
+			}
+			continue;
+		}
+		if (c == '#' && i + 1 < p_text.length() && p_text[i + 1] == '{') {
+			i += 2;
+			String expression;
+			int depth = 1;
+			bool in_string = false;
+			char32_t quote = 0;
+			while (i < p_text.length() && depth > 0) {
+				char32_t inner = p_text[i++];
+				if (in_string) {
+					expression += inner;
+					if (inner == '\\' && i < p_text.length()) {
+						expression += p_text[i++];
+						continue;
+					}
+					if (inner == quote) {
+						in_string = false;
+						quote = 0;
+					}
+					continue;
+				}
+				if (inner == '"' || inner == '\'') {
+					in_string = true;
+					quote = inner;
+					expression += inner;
+					continue;
+				}
+				if (inner == '{') {
+					depth++;
+					expression += inner;
+					continue;
+				}
+				if (inner == '}') {
+					depth--;
+					if (depth == 0) {
+						break;
+					}
+					expression += inner;
+					continue;
+				}
+				expression += inner;
+			}
+			if (depth != 0) {
+				return false;
+			}
+			Variant interpolated;
+			if (!_lunari_vm_eval_native_expression(p_script, p_instance, p_locals, p_self, expression, &interpolated)) {
+				return false;
+			}
+			value += String(interpolated);
+			i--;
+			continue;
+		}
+		value += c;
+	}
+	*r_value = value;
+	return true;
+}
+
+static bool _lunari_vm_is_complete_quoted_string(const String &p_expression) {
+	String expression = p_expression.strip_edges();
+	if (expression.length() < 2) {
+		return false;
+	}
+	const char32_t quote = expression[0];
+	if (quote != '"' && quote != '\'') {
+		return false;
+	}
+	bool escaped = false;
+	for (int i = 1; i < expression.length(); i++) {
+		const char32_t c = expression[i];
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (c == '\\') {
+			escaped = true;
+			continue;
+		}
+		if (c == quote) {
+			return i == expression.length() - 1;
+		}
+	}
+	return false;
 }
 
 static int _lunari_vm_find_top_level_token(const String &p_expression, const String &p_token, bool p_right_to_left = true) {
@@ -206,6 +419,87 @@ static Vector<String> _lunari_vm_split_top_level(const String &p_text, char32_t 
 }
 
 static bool _lunari_vm_apply_native_method(const Variant &p_receiver, const StringName &p_method, const Vector<Variant> &p_args, Variant *r_value) {
+	if (p_receiver.get_type() == Variant::STRING_NAME && p_args.size() >= 4 && p_args.size() <= 5) {
+		const StringName receiver_name = p_receiver;
+		if (receiver_name == StringName("Input") && p_method == "get_vector") {
+			Input *input = Input::get_singleton();
+			ERR_FAIL_NULL_V(input, false);
+			for (int i = 0; i < 4; i++) {
+				_lunari_vm_sync_project_input_action(_lunari_vm_input_action_from_variant(p_args[i]));
+			}
+			const float deadzone = p_args.size() == 5 ? float(p_args[4]) : -1.0f;
+			*r_value = input->get_vector(
+					_lunari_vm_input_action_from_variant(p_args[0]),
+					_lunari_vm_input_action_from_variant(p_args[1]),
+					_lunari_vm_input_action_from_variant(p_args[2]),
+					_lunari_vm_input_action_from_variant(p_args[3]),
+					deadzone);
+			return true;
+		}
+	}
+	if (p_receiver.get_type() == Variant::STRING_NAME && p_args.size() == 2) {
+		const StringName receiver_name = p_receiver;
+		if (receiver_name == StringName("Input") && p_method == "get_axis") {
+			Input *input = Input::get_singleton();
+			ERR_FAIL_NULL_V(input, false);
+			const StringName negative_action = _lunari_vm_input_action_from_variant(p_args[0]);
+			const StringName positive_action = _lunari_vm_input_action_from_variant(p_args[1]);
+			_lunari_vm_sync_project_input_action(negative_action);
+			_lunari_vm_sync_project_input_action(positive_action);
+			*r_value = input->get_axis(negative_action, positive_action);
+			return true;
+		}
+	}
+	if (p_receiver.get_type() == Variant::STRING_NAME && p_args.size() == 1) {
+		const StringName receiver_name = p_receiver;
+		const StringName action = _lunari_vm_input_action_from_variant(p_args[0]);
+		if (receiver_name == StringName("Input") || receiver_name == StringName("InputMap")) {
+			_lunari_vm_sync_project_input_action(action);
+		}
+		if (receiver_name == StringName("Input")) {
+			Input *input = Input::get_singleton();
+			ERR_FAIL_NULL_V(input, false);
+			if (p_method == "is_action_pressed") {
+				*r_value = input->is_action_pressed(action);
+				return true;
+			}
+			if (p_method == "is_action_just_pressed") {
+				*r_value = input->is_action_just_pressed(action);
+				return true;
+			}
+			if (p_method == "is_action_just_released") {
+				*r_value = input->is_action_just_released(action);
+				return true;
+			}
+			if (p_method == "get_action_strength") {
+				*r_value = input->get_action_strength(action);
+				return true;
+			}
+			if (p_method == "get_action_raw_strength") {
+				*r_value = input->get_action_raw_strength(action);
+				return true;
+			}
+		}
+		if (receiver_name == StringName("InputMap") && p_method == "has_action") {
+			InputMap *input_map = InputMap::get_singleton();
+			ERR_FAIL_NULL_V(input_map, false);
+			*r_value = input_map->has_action(action);
+			return true;
+		}
+	}
+	if (p_receiver.get_type() == Variant::STRING_NAME) {
+		const StringName receiver_name = p_receiver;
+		Engine *engine = Engine::get_singleton();
+		if (engine && engine->has_singleton(receiver_name)) {
+			Object *singleton = engine->get_singleton_object(receiver_name);
+			if (singleton) {
+				Variant singleton_receiver = singleton;
+				if (_lunari_vm_apply_native_method(singleton_receiver, p_method, p_args, r_value)) {
+					return true;
+				}
+			}
+		}
+	}
 	if (p_receiver.get_type() == Variant::STRING) {
 		String text = p_receiver;
 		if (p_args.is_empty()) {
@@ -249,8 +543,14 @@ static bool _lunari_vm_apply_native_method(const Variant &p_receiver, const Stri
 		*r_value = p_receiver.get_type() == Variant::ARRAY ? Array(p_receiver).size() : Dictionary(p_receiver).size();
 		return true;
 	}
+	if (p_receiver.get_type() == Variant::DICTIONARY && p_args.size() == 1 && (p_method == "has" || p_method == "has_key" || p_method == "key?")) {
+		Dictionary dictionary = p_receiver;
+		*r_value = dictionary.has(p_args[0]);
+		return true;
+	}
 	Object *object = p_receiver.operator Object *();
 	if (object) {
+		_lunari_vm_sync_project_input_call(object, p_method, p_args);
 		Callable::CallError call_error;
 		call_error.error = Callable::CallError::CALL_OK;
 		LocalVector<const Variant *> argptrs;
@@ -367,9 +667,29 @@ static bool _lunari_vm_resolve_symbol(LunariScript *p_script, LunariScriptInstan
 				*r_value = owner_property;
 				return true;
 			}
+			Vector<Variant> no_args;
+			if (_lunari_vm_apply_native_method(owner, symbol, no_args, r_value)) {
+				return true;
+			}
 		}
 	}
-	if ((p_script && p_script->has_user_class(symbol)) || ClassDB::class_exists(symbol)) {
+	if (p_script && p_script->has_user_class(symbol)) {
+		*r_value = StringName(symbol);
+		return true;
+	}
+	if (symbol == "Input" || symbol == "InputMap") {
+		*r_value = StringName(symbol);
+		return true;
+	}
+	Engine *engine = Engine::get_singleton();
+	if (engine && engine->has_singleton(symbol)) {
+		Object *singleton = engine->get_singleton_object(symbol);
+		if (singleton) {
+			*r_value = singleton;
+			return true;
+		}
+	}
+	if (ClassDB::class_exists(symbol)) {
 		*r_value = StringName(symbol);
 		return true;
 	}
@@ -385,8 +705,17 @@ static bool _lunari_vm_eval_native_expression(LunariScript *p_script, LunariScri
 	while (_lunari_vm_is_wrapped_in_parens(expression)) {
 		expression = expression.substr(1, expression.length() - 2).strip_edges();
 	}
-	if ((expression.begins_with("\"") && expression.ends_with("\"")) || (expression.begins_with("'") && expression.ends_with("'"))) {
-		*r_value = expression.substr(1, expression.length() - 2);
+	if (_lunari_vm_is_complete_quoted_string(expression)) {
+		String text = expression.substr(1, expression.length() - 2);
+		if (expression.begins_with("\"") && text.contains("#{")) {
+			String interpolated;
+			if (!_lunari_vm_eval_interpolated_string(p_script, p_instance, p_locals, p_self, text, &interpolated)) {
+				return false;
+			}
+			*r_value = interpolated;
+			return true;
+		}
+		*r_value = text;
 		return true;
 	}
 	if (expression.is_valid_int()) {
@@ -396,6 +725,33 @@ static bool _lunari_vm_eval_native_expression(LunariScript *p_script, LunariScri
 	if (expression.is_valid_float() && expression.find(".") >= 0) {
 		*r_value = expression.to_float();
 		return true;
+	}
+	if ((expression.begins_with("%w[") || expression.begins_with("%W[")) && expression.ends_with("]")) {
+		*r_value = _lunari_vm_percent_word_array(expression.substr(3, expression.length() - 4));
+		return true;
+	}
+	for (const String &token : { String(" or "), String(" and ") }) {
+		const int op_pos = _lunari_vm_find_top_level_token(expression, token);
+		if (op_pos > 0) {
+			Variant left;
+			if (!_lunari_vm_eval_native_expression(p_script, p_instance, p_locals, p_self, expression.substr(0, op_pos), &left)) {
+				return false;
+			}
+			if (token == " or " && _lunari_vm_truthy(left)) {
+				*r_value = true;
+				return true;
+			}
+			if (token == " and " && !_lunari_vm_truthy(left)) {
+				*r_value = false;
+				return true;
+			}
+			Variant right;
+			if (!_lunari_vm_eval_native_expression(p_script, p_instance, p_locals, p_self, expression.substr(op_pos + token.length()), &right)) {
+				return false;
+			}
+			*r_value = _lunari_vm_truthy(right);
+			return true;
+		}
 	}
 
 	struct OpInfo {
@@ -425,6 +781,18 @@ static bool _lunari_vm_eval_native_expression(LunariScript *p_script, LunariScri
 				Variant result;
 				bool valid = false;
 				Variant::evaluate(group[op_index].op, left, right, result, valid);
+				if (!valid && token == "-" && left.get_type() == Variant::ARRAY && right.get_type() == Variant::ARRAY) {
+					Array left_array = left;
+					Array right_array = right;
+					Array difference;
+					for (int i = 0; i < left_array.size(); i++) {
+						if (!right_array.has(left_array[i])) {
+							difference.push_back(left_array[i]);
+						}
+					}
+					result = difference;
+					valid = true;
+				}
 				if (!valid && token == "+" && (left.get_type() == Variant::STRING || right.get_type() == Variant::STRING)) {
 					result = String(left) + String(right);
 					valid = true;
@@ -470,9 +838,24 @@ static bool _lunari_vm_eval_native_expression(LunariScript *p_script, LunariScri
 			*r_value = Vector2(real_t(args[0]), real_t(args[1]));
 			return true;
 		}
+		if (callable == "Vector2i" && args.size() == 2) {
+			*r_value = Vector2i(int64_t(args[0]), int64_t(args[1]));
+			return true;
+		}
 		if (callable == "Vector3" && args.size() == 3) {
 			*r_value = Vector3(real_t(args[0]), real_t(args[1]), real_t(args[2]));
 			return true;
+		}
+		if (LunariUtilityFunctions::function_exists(callable)) {
+			LunariUtilityFunctions::FunctionPtr function = LunariUtilityFunctions::get_function(callable);
+			LocalVector<const Variant *> argptrs;
+			argptrs.resize(args.size());
+			for (int i = 0; i < args.size(); i++) {
+				argptrs[i] = &args[i];
+			}
+			Callable::CallError call_error;
+			function(r_value, argptrs.ptr(), args.size(), call_error);
+			return call_error.error == Callable::CallError::CALL_OK;
 		}
 		int dot = _lunari_vm_find_top_level_token(callable, ".");
 		if (dot > 0) {
@@ -536,6 +919,12 @@ static bool _lunari_vm_eval_native_expression(LunariScript *p_script, LunariScri
 		Variant method_value;
 		if (_lunari_vm_apply_native_method(receiver, member, Vector<Variant>(), &method_value)) {
 			*r_value = method_value;
+			return true;
+		}
+		bool valid_named = false;
+		Variant named_value = receiver.get_named(member, valid_named);
+		if (valid_named) {
+			*r_value = named_value;
 			return true;
 		}
 		Object *object = receiver.operator Object *();
@@ -846,7 +1235,27 @@ LunariVM::Result LunariVM::execute_method(LunariScript *p_script, const LunariBy
 						return result;
 					}
 					bool valid_property = false;
-					object->set(instruction.operand_b, value, &valid_property);
+					if (String(instruction.operand_b).contains(".")) {
+						Vector<String> property_path = _lunari_vm_split_top_level(instruction.operand_b, '.');
+						if (property_path.size() == 2) {
+							Variant owner_property = object->get(property_path[0], &valid_property);
+							if (valid_property) {
+								bool valid_named = false;
+								owner_property.set_named(property_path[1], value, valid_named);
+								if (valid_named) {
+									bool valid_writeback = false;
+									object->set(property_path[0], owner_property, &valid_writeback);
+									valid_property = valid_writeback;
+								} else {
+									valid_property = false;
+								}
+							}
+						} else {
+							valid_property = false;
+						}
+					} else {
+						object->set(instruction.operand_b, value, &valid_property);
+					}
 					if (!valid_property) {
 						result.error = vformat("Lunari VM unknown property '%s.%s'.", instruction.operand_a, instruction.operand_b);
 						_lunari_vm_finalize_frame(frame, p_script, p_instance, instruction.line);

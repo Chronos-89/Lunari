@@ -154,6 +154,10 @@ class LunariScriptInstance : public ScriptInstance {
 	StringName cached_fast_target_field;
 	Object *cached_fast_target_object = nullptr;
 	Label *cached_fast_target_label = nullptr;
+	StringName cached_fast_proc_field;
+	int64_t cached_fast_proc_mul = 1;
+	int64_t cached_fast_proc_add = 0;
+	bool ready_called = false;
 
 public:
 	bool set(const StringName &p_name, const Variant &p_value) override;
@@ -175,6 +179,8 @@ public:
 	void set_field(const StringName &p_name, const Variant &p_value);
 	bool has_field(const StringName &p_name) const;
 	Array get_field_names() const;
+	bool try_get_cached_fast_proc_affine(const StringName &p_field_name, const Variant &p_arg, Variant *r_return_value) const;
+	void cache_fast_proc_affine(const StringName &p_field_name, int64_t p_mul, int64_t p_add);
 	void track_created_object(Object *p_object);
 	void release_tracked_object(Object *p_object);
 
@@ -258,6 +264,12 @@ public:
 		MethodBind *cached_property_setter_bind = nullptr;
 		bool cached_property_lookup = false;
 		bool cached_property_has_setter = false;
+		bool cached_proc_affine_lookup = false;
+		bool cached_proc_affine_supported = false;
+		String cached_proc_body;
+		StringName cached_proc_parameter;
+		int64_t cached_proc_mul = 1;
+		int64_t cached_proc_add = 0;
 		int first_expression_kind = 0;
 		int64_t first_mul = 1;
 		int64_t first_add = 0;
@@ -265,6 +277,7 @@ public:
 		Vector<String> first_small_int_strings;
 		String first_field_name;
 		String first_property_name;
+		Vector<String> first_string_values;
 		int second_expression_kind = 0;
 		int64_t second_mul = 1;
 		int64_t second_add = 0;
@@ -322,6 +335,7 @@ private:
 	bool _execute_method_body(const String &p_method, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, Ref<LunariObject> p_self = Ref<LunariObject>(), Variant *r_return_value = nullptr, const StringName &p_class_name = StringName(), const Vector<Variant> *p_args = nullptr);
 	bool _execute_statement(const String &p_statement, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, Ref<LunariObject> p_self = Ref<LunariObject>(), bool *r_did_return = nullptr, Variant *r_return_value = nullptr);
 	Variant _eval_expression(const String &p_expression, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals = nullptr, bool *r_valid = nullptr);
+	Variant _evaluate_instance_field_default(const FieldInfo &p_field, LunariScriptInstance *p_instance, bool *r_valid = nullptr);
 	FastBytecodeMethodPlan *_get_fast_bytecode_method_plan(const StringName &p_owner_class, const StringName &p_method);
 	FastBytecodeMethodPlan *_get_fast_instance_bytecode_method_plan(const StringName &p_method);
 	bool _execute_fast_instance_bytecode_planp(FastBytecodeMethodPlan *p_plan, LunariScriptInstance *p_instance, const Variant **p_args, int p_argcount, Variant *r_return_value = nullptr);
@@ -392,6 +406,7 @@ public:
 	const Variant get_rpc_config() const override;
 
 	const Vector<FieldInfo> &get_lunari_fields();
+	void get_lunari_fields_including_base(Vector<FieldInfo> *r_fields);
 	const Vector<MethodInfo> &get_lunari_methods();
 	bool has_user_class(const StringName &p_class_name);
 	bool has_static_field(const StringName &p_class_name, const StringName &p_field_name, bool p_inherit = true);
@@ -400,6 +415,7 @@ public:
 	void set_static_field(const StringName &p_class_name, const StringName &p_field_name, const Variant &p_value);
 	Variant remove_static_field(const StringName &p_class_name, const StringName &p_field_name, bool *r_valid = nullptr);
 	Variant call_static_method(const StringName &p_class_name, const StringName &p_method, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr);
+	void call_notification_stack(LunariScriptInstance *p_instance, int p_notification, bool p_reversed);
 	String disassemble_bytecode();
 	String format_source_code(const String &p_code = String()) const;
 	Array collect_outline(const String &p_code = String()) const;
@@ -427,6 +443,8 @@ public:
 	Dictionary apply_project_source_fixes(const Dictionary &p_sources, const Array &p_fixes) const;
 	bool debug_tokenizer_roundtrip(const String &p_code, bool p_compressed = false) const;
 	Dictionary debug_language_state_probe() const;
+	Dictionary debug_lookup_code_probe() const;
+	Dictionary debug_stack_locals_overhead_probe() const;
 	Dictionary debug_profile_state_probe() const;
 	Dictionary debug_placeholder_state_probe() const;
 	Variant construct_user_class(const StringName &p_class_name, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr);

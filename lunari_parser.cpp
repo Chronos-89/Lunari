@@ -4,6 +4,127 @@
 
 #include "lunari_parser.h"
 
+static int _lunari_literal_depth_delta(const String &p_line, int p_depth) {
+	bool in_string = false;
+	char32_t quote = 0;
+	for (int i = 0; i < p_line.length(); i++) {
+		char32_t c = p_line[i];
+		if (in_string) {
+			if (c == '\\') {
+				i++;
+				continue;
+			}
+			if (c == quote) {
+				in_string = false;
+				quote = 0;
+			}
+			continue;
+		}
+		if (c == '"' || c == '\'') {
+			in_string = true;
+			quote = c;
+			continue;
+		}
+		if (c == '#') {
+			break;
+		}
+		if (c == '[' || c == '(' || c == '{') {
+			p_depth++;
+		} else if (c == ']' || c == ')' || c == '}') {
+			p_depth--;
+			if (p_depth < 0) {
+				p_depth = 0;
+			}
+		}
+	}
+	return p_depth;
+}
+
+static Vector<String> _lunari_join_multiline_literals(const Vector<String> &p_lines) {
+	Vector<String> logical_lines;
+	String current;
+	int current_start = -1;
+	int continuation_count = 0;
+	int depth = 0;
+
+	for (int i = 0; i < p_lines.size(); i++) {
+		const String stripped = p_lines[i].strip_edges();
+		if (current_start < 0) {
+			current = p_lines[i];
+			current_start = i;
+			continuation_count = 0;
+		} else {
+			current += " " + stripped;
+			continuation_count++;
+		}
+
+		depth = _lunari_literal_depth_delta(p_lines[i], depth);
+		if (depth > 0) {
+			continue;
+		}
+
+		logical_lines.push_back(current);
+		for (int blank_index = 0; blank_index < continuation_count; blank_index++) {
+			logical_lines.push_back(String());
+		}
+		current = String();
+		current_start = -1;
+		continuation_count = 0;
+		depth = 0;
+	}
+
+	if (current_start >= 0) {
+		logical_lines.push_back(current);
+		for (int blank_index = 0; blank_index < continuation_count; blank_index++) {
+			logical_lines.push_back(String());
+		}
+	}
+
+	return logical_lines;
+}
+
+static int _lunari_find_postfix_keyword(const String &p_line, const String &p_keyword) {
+	const String needle = " " + p_keyword + " ";
+	int found = -1;
+	int depth = 0;
+	bool in_string = false;
+	char32_t quote = 0;
+	for (int i = 0; i <= p_line.length() - needle.length(); i++) {
+		char32_t c = p_line[i];
+		if (in_string) {
+			if (c == '\\') {
+				i++;
+				continue;
+			}
+			if (c == quote) {
+				in_string = false;
+				quote = 0;
+			}
+			continue;
+		}
+		if (c == '"' || c == '\'') {
+			in_string = true;
+			quote = c;
+			continue;
+		}
+		if (c == '[' || c == '(' || c == '{') {
+			depth++;
+			continue;
+		}
+		if (c == ']' || c == ')' || c == '}') {
+			depth--;
+			if (depth < 0) {
+				depth = 0;
+			}
+			continue;
+		}
+		if (depth == 0 && p_line.substr(i, needle.length()) == needle) {
+			found = i;
+		}
+	}
+	return found;
+}
+
 static bool _lunari_is_annotation_start(const String &p_line) {
 	if (!p_line.begins_with("@") || p_line.begins_with("@@")) {
 		return false;
@@ -459,6 +580,22 @@ LunariAST::Node LunariParser::_parse_statement(const String &p_line, int p_line_
 		node.kind = LunariAST::Node::NODE_BEGIN;
 		return node;
 	}
+	if (!line.begins_with("if ") && !line.begins_with("unless ")) {
+		int postfix_if = _lunari_find_postfix_keyword(line, "if");
+		int postfix_unless = _lunari_find_postfix_keyword(line, "unless");
+		if (postfix_if > 0 && (postfix_unless < 0 || postfix_if > postfix_unless)) {
+			node.kind = LunariAST::Node::NODE_IF;
+			node.expression = line.substr(postfix_if + 4).strip_edges();
+			node.children.push_back(_parse_statement(line.substr(0, postfix_if).strip_edges(), p_line_number));
+			return node;
+		}
+		if (postfix_unless > 0) {
+			node.kind = LunariAST::Node::NODE_UNLESS;
+			node.expression = line.substr(postfix_unless + 8).strip_edges();
+			node.children.push_back(_parse_statement(line.substr(0, postfix_unless).strip_edges(), p_line_number));
+			return node;
+		}
+	}
 	if (line.begins_with("match ")) {
 		node.kind = LunariAST::Node::NODE_MATCH;
 		node.expression = line.substr(6).strip_edges();
@@ -912,6 +1049,10 @@ void LunariParser::_parse_block(const Vector<String> &p_lines, int &r_index, Vec
 			continue;
 		}
 		if (node.kind == LunariAST::Node::NODE_IF || node.kind == LunariAST::Node::NODE_UNLESS || node.kind == LunariAST::Node::NODE_WHILE || node.kind == LunariAST::Node::NODE_UNTIL || node.kind == LunariAST::Node::NODE_FOR) {
+			if (!node.children.is_empty()) {
+				r_nodes.push_back(node);
+				continue;
+			}
 			r_index++;
 			_parse_block(p_lines, r_index, node.children, "end");
 			if (r_index < p_lines.size()) {
@@ -937,7 +1078,7 @@ void LunariParser::_parse_block(const Vector<String> &p_lines, int &r_index, Vec
 
 LunariAST::Document LunariParser::parse_ast(const String &p_source) const {
 	LunariAST::Document document;
-	Vector<String> lines = p_source.split("\n");
+	Vector<String> lines = _lunari_join_multiline_literals(p_source.split("\n"));
 	int index = 0;
 	_parse_block(lines, index, document.children);
 	return document;

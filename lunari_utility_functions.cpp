@@ -4,7 +4,15 @@
 
 #include "lunari_utility_functions.h"
 
+#include "core/io/resource_loader.h"
 #include "core/math/math_funcs.h"
+#include "core/object/class_db.h"
+#include "core/object/script_language.h"
+#include "core/string/print_string.h"
+#include "core/variant/typed_array.h"
+#include "core/variant/variant_utility.h"
+#include "core/variant/variant.h"
+#include "core/math/color.h"
 #include "core/math/vector2.h"
 #include "core/math/vector3.h"
 #include "core/templates/hash_map.h"
@@ -33,11 +41,221 @@ static void _lunari_validate_arg_count(Variant *r_ret, int p_arg_count, int p_ex
 	}
 }
 
+static void _lunari_validate_arg_count_range(Variant *r_ret, int p_arg_count, int p_min_expected, int p_max_expected, Callable::CallError &r_error) {
+	if (p_arg_count < p_min_expected) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;
+		r_error.expected = p_min_expected;
+	}
+	if (p_arg_count > p_max_expected) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS;
+		r_error.expected = p_max_expected;
+	}
+}
+
 #define LUNARI_VALIDATE_ARG_COUNT(m_count)                       \
 	_lunari_validate_arg_count(r_ret, p_arg_count, m_count, r_error); \
 	if (r_error.error != Callable::CallError::CALL_OK) {          \
 		return;                                                   \
 	}
+
+#define LUNARI_VALIDATE_ARG_COUNT_RANGE(m_min_count, m_max_count)                    \
+	_lunari_validate_arg_count_range(r_ret, p_arg_count, m_min_count, m_max_count, r_error); \
+	if (r_error.error != Callable::CallError::CALL_OK) {                             \
+		return;                                                                      \
+	}
+
+static void _lunari_type_exists(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	*r_ret = ClassDB::class_exists(StringName(String(*p_args[0])));
+}
+
+static void _lunari_char(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	const int64_t code = *p_args[0];
+	if (code < 0 || code > UINT32_MAX) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		r_error.expected = Variant::INT;
+		return;
+	}
+	*r_ret = String::chr(code);
+}
+
+static void _lunari_ord(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	const String text = *p_args[0];
+	if (text.length() != 1) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		r_error.expected = Variant::STRING;
+		return;
+	}
+	*r_ret = text.get(0);
+}
+
+static void _lunari_range(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT_RANGE(1, 3);
+	const int64_t from = p_arg_count == 1 ? 0 : int64_t(*p_args[0]);
+	const int64_t to = p_arg_count == 1 ? int64_t(*p_args[0]) : int64_t(*p_args[1]);
+	const int64_t step = p_arg_count == 3 ? int64_t(*p_args[2]) : 1;
+	if (step == 0) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 2;
+		r_error.expected = Variant::INT;
+		return;
+	}
+	Array values;
+	if ((from >= to && step > 0) || (from <= to && step < 0)) {
+		*r_ret = values;
+		return;
+	}
+	int64_t count = step > 0 ? Math::division_round_up(to - from, step) : Math::division_round_up(from - to, -step);
+	if (count > INT32_MAX) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		r_error.expected = Variant::INT;
+		return;
+	}
+	values.resize(count);
+	int64_t value = from;
+	for (int64_t i = 0; i < count; i++) {
+		values[i] = value;
+		value += step;
+	}
+	*r_ret = values;
+}
+
+static void _lunari_load(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	*r_ret = ResourceLoader::load(String(*p_args[0]));
+}
+
+static void _lunari_color8(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT_RANGE(3, 4);
+	const int64_t alpha = p_arg_count == 4 ? int64_t(*p_args[3]) : 255;
+	*r_ret = Color::from_rgba8(int64_t(*p_args[0]), int64_t(*p_args[1]), int64_t(*p_args[2]), alpha);
+}
+
+static void _lunari_len(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	switch (p_args[0]->get_type()) {
+		case Variant::STRING:
+		case Variant::STRING_NAME: {
+			String text = *p_args[0];
+			*r_ret = text.length();
+		} break;
+		case Variant::DICTIONARY: {
+			Dictionary dictionary = *p_args[0];
+			*r_ret = dictionary.size();
+		} break;
+		case Variant::ARRAY: {
+			Array array = *p_args[0];
+			*r_ret = array.size();
+		} break;
+		case Variant::PACKED_BYTE_ARRAY:
+		{
+			PackedByteArray array = *p_args[0];
+			*r_ret = array.size();
+		} break;
+		case Variant::PACKED_INT32_ARRAY:
+		{
+			PackedInt32Array array = *p_args[0];
+			*r_ret = array.size();
+		} break;
+		case Variant::PACKED_INT64_ARRAY:
+		{
+			PackedInt64Array array = *p_args[0];
+			*r_ret = array.size();
+		} break;
+		case Variant::PACKED_FLOAT32_ARRAY:
+		{
+			PackedFloat32Array array = *p_args[0];
+			*r_ret = array.size();
+		} break;
+		case Variant::PACKED_FLOAT64_ARRAY:
+		{
+			PackedFloat64Array array = *p_args[0];
+			*r_ret = array.size();
+		} break;
+		case Variant::PACKED_STRING_ARRAY:
+		{
+			PackedStringArray array = *p_args[0];
+			*r_ret = array.size();
+		} break;
+		case Variant::PACKED_VECTOR2_ARRAY:
+		{
+			PackedVector2Array array = *p_args[0];
+			*r_ret = array.size();
+		} break;
+		case Variant::PACKED_VECTOR3_ARRAY:
+		{
+			PackedVector3Array array = *p_args[0];
+			*r_ret = array.size();
+		} break;
+		case Variant::PACKED_COLOR_ARRAY:
+		{
+			PackedColorArray array = *p_args[0];
+			*r_ret = array.size();
+		} break;
+		case Variant::PACKED_VECTOR4_ARRAY:
+		{
+			PackedVector4Array array = *p_args[0];
+			*r_ret = array.size();
+		} break;
+		default:
+			*r_ret = Variant();
+			r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+			r_error.argument = 0;
+			break;
+	}
+}
+
+static void _lunari_is_instance_of(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(2);
+	if (p_args[1]->get_type() == Variant::INT) {
+		int64_t builtin_type = *p_args[1];
+		if (builtin_type < 0 || builtin_type >= Variant::VARIANT_MAX) {
+			*r_ret = Variant();
+			r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+			r_error.argument = 1;
+			return;
+		}
+		*r_ret = p_args[0]->get_type() == Variant::Type(builtin_type);
+		return;
+	}
+	Object *value_object = p_args[0]->operator Object *();
+	if (!value_object) {
+		*r_ret = false;
+		return;
+	}
+	if (p_args[1]->get_type() == Variant::STRING_NAME || p_args[1]->get_type() == Variant::STRING) {
+		StringName class_name = StringName(String(*p_args[1]));
+		*r_ret = ClassDB::class_exists(class_name) && ClassDB::is_parent_class(value_object->get_class_name(), class_name);
+		return;
+	}
+	Object *type_object = p_args[1]->operator Object *();
+	Script *script_type = Object::cast_to<Script>(type_object);
+	if (script_type && value_object->get_script_instance()) {
+		bool matches = false;
+		Script *script_ptr = value_object->get_script_instance()->get_script().ptr();
+		while (script_ptr) {
+			if (script_ptr == script_type) {
+				matches = true;
+				break;
+			}
+			script_ptr = script_ptr->get_base_script().ptr();
+		}
+		*r_ret = matches;
+		return;
+	}
+	*r_ret = false;
+}
 
 static void _lunari_abs(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
 	LUNARI_VALIDATE_ARG_COUNT(1);
@@ -101,6 +319,18 @@ static void _lunari_clamp(Variant *r_ret, const Variant **p_args, int p_arg_coun
 		return;
 	}
 	*r_ret = bool(greater) ? *p_args[2] : value;
+}
+
+static void _lunari_move_toward(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(3);
+	if ((p_args[0]->get_type() != Variant::INT && p_args[0]->get_type() != Variant::FLOAT) ||
+			(p_args[1]->get_type() != Variant::INT && p_args[1]->get_type() != Variant::FLOAT) ||
+			(p_args[2]->get_type() != Variant::INT && p_args[2]->get_type() != Variant::FLOAT)) {
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		return;
+	}
+	*r_ret = Math::move_toward(double(*p_args[0]), double(*p_args[1]), double(*p_args[2]));
 }
 
 static void _lunari_floor(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
@@ -211,6 +441,17 @@ static void _register_lunari_function(const StringName &p_name, LunariUtilityFun
 	(*lunari_utility_functions)[p_name] = info;
 }
 
+static void _register_lunari_vararg_function(const StringName &p_name, LunariUtilityFunctions::FunctionPtr p_function, int p_arg_count, Variant::Type p_return_type) {
+	LunariUtilityFunctionInfo info;
+	info.function = p_function;
+	info.argument_count = p_arg_count;
+	info.vararg = true;
+	info.return_type = p_return_type;
+	info.method_info = MethodInfo(p_name);
+	info.method_info.flags |= METHOD_FLAG_VARARG;
+	(*lunari_utility_functions)[p_name] = info;
+}
+
 LunariUtilityFunctions::FunctionPtr LunariUtilityFunctions::get_function(const StringName &p_function) {
 	ERR_FAIL_NULL_V(lunari_utility_functions, nullptr);
 	HashMap<StringName, LunariUtilityFunctionInfo>::Iterator E = lunari_utility_functions->find(p_function);
@@ -256,6 +497,14 @@ void LunariUtilityFunctions::register_functions() {
 	ERR_FAIL_COND(lunari_utility_functions != nullptr);
 	lunari_utility_functions = memnew(LunariUtilityFunctionMap);
 
+	_register_lunari_function("type_exists", _lunari_type_exists, 1, Variant::BOOL);
+	_register_lunari_function("char", _lunari_char, 1, Variant::STRING);
+	_register_lunari_function("ord", _lunari_ord, 1, Variant::INT);
+	_register_lunari_vararg_function("range", _lunari_range, 3, Variant::ARRAY);
+	_register_lunari_function("load", _lunari_load, 1, Variant::OBJECT);
+	_register_lunari_vararg_function("Color8", _lunari_color8, 4, Variant::COLOR);
+	_register_lunari_function("len", _lunari_len, 1, Variant::INT);
+	_register_lunari_function("is_instance_of", _lunari_is_instance_of, 2, Variant::BOOL);
 	_register_lunari_function("abs", _lunari_abs, 1, Variant::FLOAT);
 	_register_lunari_function("sqrt", _lunari_sqrt, 1, Variant::FLOAT);
 	_register_lunari_function("pow", _lunari_pow, 2, Variant::FLOAT);
@@ -263,6 +512,7 @@ void LunariUtilityFunctions::register_functions() {
 	_register_lunari_function("min", _lunari_min, 2, Variant::NIL);
 	_register_lunari_function("max", _lunari_max, 2, Variant::NIL);
 	_register_lunari_function("clamp", _lunari_clamp, 3, Variant::NIL);
+	_register_lunari_function("move_toward", _lunari_move_toward, 3, Variant::FLOAT);
 	_register_lunari_function("floor", _lunari_floor, 1, Variant::FLOAT);
 	_register_lunari_function("ceil", _lunari_ceil, 1, Variant::FLOAT);
 	_register_lunari_function("round", _lunari_round, 1, Variant::FLOAT);

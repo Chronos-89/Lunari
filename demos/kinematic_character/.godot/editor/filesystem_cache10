@@ -1,0 +1,16 @@
+63f7b34db8d8cdea90c76aacccf841ec
+::res://::1780519884
+icon.webp::CompressedTexture2D::1483256073024767991::1780486654::1780511385::1::::<><><>0<>0<>6ed69dc78993278f50224965eb7db426<>res://.godot/imported/icon.webp-e94f9a68b0f625a567a797079e4d325f.ctex::
+README.md::TextFile::-1::1780486848::0::1::::<><><>0<>0<><>::
+world.tscn::PackedScene::8251045638082085582::1780518102::0::1::::<><><>0<>0<><>::uid://b5mf7fqidii2e::::res://level/obstacle.png<>uid://bnkypsa1y5kkm::::res://player/player.tscn<>uid://beuhrwa148q25::::res://level/princess.png<>uid://rg70tphg55dw::::res://level/circle.png<>uid://c30pi5m3wc88i::::res://level/long_obstacle.png<>uid://c0kel0tofql57::::res://level/princess.lu
+::res://level/::1780511385
+circle.png::CompressedTexture2D::1207585218430057316::1780486655::1780511385::1::::<><><>0<>0<>a706fa39a20c0e5cd46b554275e31b4e<>res://.godot/imported/circle.png-65a28e998f412b3cddff971e28b7d768.ctex::
+long_obstacle.png::CompressedTexture2D::6790665069885205854::1780486655::1780511385::1::::<><><>0<>0<>f72b9e31c85117d973fc4f1eeb1d7852<>res://.godot/imported/long_obstacle.png-d70ee394f796e1de9a423783aa84ec5d.ctex::
+obstacle.png::CompressedTexture2D::4517219543953017258::1780486655::1780511385::1::::<><><>0<>0<>afb2e2b7d4be171ed4c8843f88ba1461<>res://.godot/imported/obstacle.png-06287f6b2d26dd03335fd87ab78c2cc2.ctex::
+princess.lu::LunariScript::6548470090660086936::1780508005::0::1::::Princess<>Area2D<><>0<>0<><>::
+princess.png::CompressedTexture2D::2708920147507269004::1780486656::1780511385::1::::<><><>0<>0<>614c5be23d82ae0c5e57b214bb0c1bf4<>res://.godot/imported/princess.png-359cb1d8a4fd115119b22ac7899e2787.ctex::
+::res://player/::1780515620
+player.gd::GDScript::8947447663151535295::1780507836::0::1::::<>CharacterBody2D<><>0<>0<><>::
+player.lu::LunariScript::1433889684493949947::1780518569::0::1::::Player<>CharacterBody2D<><>0<>0<><>::
+player.png::CompressedTexture2D::5539065519522165065::1780486654::1780511385::1::::<><><>0<>0<>1fb1fbb0996967f539c9a8926615b0bc<>res://.godot/imported/player.png-1ad27fc2a62fa126eae918723933dd6f.ctex::
+player.tscn::PackedScene::3321004369897975096::1780486987::0::1::::<><><>0<>0<><>::uid://uot7omw8selv::::res://player/player.lu<>uid://ck6funocmdo8x::::res://player/player.png

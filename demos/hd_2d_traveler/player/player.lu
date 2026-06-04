@@ -1,0 +1,28 @@
+require "godot"
+
+class Player < CharacterBody2D
+  @speed: Float = 170.0
+  @depth_speed: Float = 0.56
+  @near_y: Float = 172.0
+  @far_y: Float = 356.0
+
+  def physics_process(delta: Float): void
+	input: Vector2 = Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	self.velocity = Vector2(input.x * @speed, input.y * @speed * @depth_speed)
+	move_and_slide()
+	apply_depth()
+  end
+
+  def apply_depth: void
+	depth: Float = (self.global_position.y - @near_y) / (@far_y - @near_y)
+	if depth < 0.0
+	  depth = 0.0
+	end
+	if depth > 1.0
+	  depth = 1.0
+	end
+	size: Float = 0.74 + depth * 0.34
+	self.scale = Vector2(size, size)
+	self.z_index = int(self.global_position.y)
+  end
+end

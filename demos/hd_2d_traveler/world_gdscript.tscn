@@ -1,0 +1,176 @@
+[gd_scene load_steps=6 format=4]
+
+[ext_resource type="PackedScene" path="res://player/player_gdscript.tscn" id="1"]
+
+[sub_resource type="Gradient" id="Gradient_lamp"]
+offsets = PackedFloat32Array(0, 0.42, 1)
+colors = PackedColorArray(1, 0.74, 0.36, 0.95, 0.88, 0.31, 0.13, 0.34, 0.08, 0.04, 0.02, 0)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_lamp"]
+gradient = SubResource("Gradient_lamp")
+width = 256
+height = 256
+fill = 1
+fill_from = Vector2(0.5, 0.5)
+fill_to = Vector2(1, 0.5)
+
+[sub_resource type="OccluderPolygon2D" id="OccluderPolygon2D_post"]
+polygon = PackedVector2Array(-8, -76, 8, -76, 8, 0, -8, 0)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_bound"]
+size = Vector2(900, 24)
+
+[node name="HD2DWorld" type="Node2D"]
+y_sort_enabled = true
+
+[node name="CanvasModulate" type="CanvasModulate" parent="."]
+color = Color(0.38, 0.33, 0.45, 1)
+
+[node name="Backdrop" type="Node2D" parent="."]
+z_index = -120
+
+[node name="Sky" type="Polygon2D" parent="Backdrop"]
+color = Color(0.08, 0.07, 0.12, 1)
+polygon = PackedVector2Array(-640, -360, 640, -360, 640, 72, -640, 72)
+
+[node name="DistantRidge" type="Polygon2D" parent="Backdrop"]
+color = Color(0.13, 0.11, 0.19, 1)
+polygon = PackedVector2Array(-620, 76, -470, 8, -300, 52, -112, -6, 70, 42, 260, 2, 640, 82, 640, 160, -640, 160)
+
+[node name="TownSilhouette" type="Polygon2D" parent="Backdrop"]
+color = Color(0.16, 0.1, 0.14, 1)
+polygon = PackedVector2Array(-520, 120, -492, 42, -452, 42, -428, 120, -360, 120, -336, 66, -294, 66, -268, 120, -184, 120, -164, 36, -124, 36, -96, 120, -8, 120, 20, 58, 68, 58, 94, 120, 194, 120, 218, 28, 262, 28, 294, 120, 414, 120, 442, 70, 486, 70, 516, 120, 640, 120, 640, 190, -640, 190)
+
+[node name="Ground" type="Node2D" parent="."]
+z_index = -80
+
+[node name="RoadBase" type="Polygon2D" parent="Ground"]
+color = Color(0.24, 0.17, 0.19, 1)
+polygon = PackedVector2Array(-210, 128, 210, 128, 520, 390, -520, 390)
+
+[node name="RoadGlow" type="Polygon2D" parent="Ground"]
+color = Color(0.42, 0.28, 0.22, 0.72)
+polygon = PackedVector2Array(-120, 160, 120, 160, 340, 390, -340, 390)
+
+[node name="LeftWalkway" type="Polygon2D" parent="Ground"]
+color = Color(0.16, 0.13, 0.18, 1)
+polygon = PackedVector2Array(-520, 156, -226, 128, -520, 390, -650, 390)
+
+[node name="RightWalkway" type="Polygon2D" parent="Ground"]
+color = Color(0.16, 0.13, 0.18, 1)
+polygon = PackedVector2Array(226, 128, 520, 156, 650, 390, 520, 390)
+
+[node name="NearCobbleA" type="Polygon2D" parent="Ground"]
+color = Color(0.55, 0.35, 0.24, 0.24)
+polygon = PackedVector2Array(-310, 320, 312, 320, 364, 348, -364, 348)
+
+[node name="NearCobbleB" type="Polygon2D" parent="Ground"]
+color = Color(0.69, 0.44, 0.27, 0.16)
+polygon = PackedVector2Array(-420, 362, 420, 362, 482, 390, -482, 390)
+
+[node name="WorldBounds" type="StaticBody2D" parent="."]
+collision_layer = 1
+collision_mask = 2
+
+[node name="TopBound" type="CollisionShape2D" parent="WorldBounds"]
+position = Vector2(0, 118)
+shape = SubResource("RectangleShape2D_bound")
+
+[node name="LeftBound" type="CollisionPolygon2D" parent="WorldBounds"]
+polygon = PackedVector2Array(-548, 150, -510, 150, -430, 390, -570, 390)
+
+[node name="RightBound" type="CollisionPolygon2D" parent="WorldBounds"]
+polygon = PackedVector2Array(510, 150, 548, 150, 570, 390, 430, 390)
+
+[node name="Actors" type="Node2D" parent="."]
+y_sort_enabled = true
+
+[node name="LeftLantern" type="Node2D" parent="Actors"]
+position = Vector2(-216, 230)
+z_index = 230
+
+[node name="Post" type="Polygon2D" parent="Actors/LeftLantern"]
+color = Color(0.11, 0.06, 0.06, 1)
+polygon = PackedVector2Array(-8, -82, 8, -82, 8, 4, -8, 4)
+
+[node name="Cap" type="Polygon2D" parent="Actors/LeftLantern"]
+color = Color(0.31, 0.12, 0.1, 1)
+polygon = PackedVector2Array(-23, -96, 23, -96, 16, -78, -16, -78)
+
+[node name="LampGlass" type="Polygon2D" parent="Actors/LeftLantern"]
+color = Color(1, 0.62, 0.27, 1)
+polygon = PackedVector2Array(-13, -78, 13, -78, 10, -48, -10, -48)
+
+[node name="Light" type="PointLight2D" parent="Actors/LeftLantern"]
+position = Vector2(0, -62)
+color = Color(1, 0.63, 0.29, 1)
+energy = 1.45
+texture = SubResource("GradientTexture2D_lamp")
+texture_scale = 2.2
+
+[node name="Occluder" type="LightOccluder2D" parent="Actors/LeftLantern"]
+occluder = SubResource("OccluderPolygon2D_post")
+
+[node name="RightLantern" type="Node2D" parent="Actors"]
+position = Vector2(238, 272)
+z_index = 272
+
+[node name="Post" type="Polygon2D" parent="Actors/RightLantern"]
+color = Color(0.11, 0.06, 0.06, 1)
+polygon = PackedVector2Array(-8, -82, 8, -82, 8, 4, -8, 4)
+
+[node name="Cap" type="Polygon2D" parent="Actors/RightLantern"]
+color = Color(0.31, 0.12, 0.1, 1)
+polygon = PackedVector2Array(-23, -96, 23, -96, 16, -78, -16, -78)
+
+[node name="LampGlass" type="Polygon2D" parent="Actors/RightLantern"]
+color = Color(1, 0.62, 0.27, 1)
+polygon = PackedVector2Array(-13, -78, 13, -78, 10, -48, -10, -48)
+
+[node name="Light" type="PointLight2D" parent="Actors/RightLantern"]
+position = Vector2(0, -62)
+color = Color(1, 0.52, 0.22, 1)
+energy = 1.25
+texture = SubResource("GradientTexture2D_lamp")
+texture_scale = 2.0
+
+[node name="Occluder" type="LightOccluder2D" parent="Actors/RightLantern"]
+occluder = SubResource("OccluderPolygon2D_post")
+
+[node name="MarketStall" type="StaticBody2D" parent="Actors"]
+position = Vector2(-68, 188)
+z_index = 188
+collision_layer = 1
+collision_mask = 2
+
+[node name="Collision" type="CollisionPolygon2D" parent="Actors/MarketStall"]
+polygon = PackedVector2Array(-44, -8, 44, -8, 44, 18, -44, 18)
+
+[node name="Awning" type="Polygon2D" parent="Actors/MarketStall"]
+color = Color(0.6, 0.12, 0.18, 1)
+polygon = PackedVector2Array(-62, -62, 62, -62, 42, -28, -42, -28)
+
+[node name="Counter" type="Polygon2D" parent="Actors/MarketStall"]
+color = Color(0.25, 0.12, 0.08, 1)
+polygon = PackedVector2Array(-48, -28, 48, -28, 44, 16, -44, 16)
+
+[node name="Crates" type="Node2D" parent="Actors"]
+position = Vector2(128, 340)
+z_index = 340
+
+[node name="CrateA" type="Polygon2D" parent="Actors/Crates"]
+color = Color(0.44, 0.22, 0.12, 1)
+polygon = PackedVector2Array(-32, -32, 0, -32, 0, 0, -32, 0)
+
+[node name="CrateB" type="Polygon2D" parent="Actors/Crates"]
+position = Vector2(28, 14)
+color = Color(0.33, 0.16, 0.09, 1)
+polygon = PackedVector2Array(-28, -28, 6, -28, 6, 6, -28, 6)
+
+[node name="Player" parent="Actors" instance=ExtResource("1")]
+position = Vector2(0, 286)
+
+[node name="ForegroundVignette" type="Polygon2D" parent="."]
+z_index = 500
+color = Color(0.04, 0.02, 0.025, 0.42)
+polygon = PackedVector2Array(-640, 404, 640, 404, 640, 520, -640, 520)

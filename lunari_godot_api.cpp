@@ -318,6 +318,18 @@ void LunariGodotApi::_apply_metadata_patches() {
 		if (GetVector) {
 			GetVector->value.return_type = "Vector2";
 		}
+		HashMap<StringName, Method>::Iterator IsActionPressed = InputClass->value.methods.find("is_action_pressed");
+		if (IsActionPressed) {
+			IsActionPressed->value.return_type = "Boolean";
+		}
+		HashMap<StringName, Method>::Iterator IsActionJustPressed = InputClass->value.methods.find("is_action_just_pressed");
+		if (IsActionJustPressed) {
+			IsActionJustPressed->value.return_type = "Boolean";
+		}
+		HashMap<StringName, Method>::Iterator IsActionJustReleased = InputClass->value.methods.find("is_action_just_released");
+		if (IsActionJustReleased) {
+			IsActionJustReleased->value.return_type = "Boolean";
+		}
 	}
 }
 
