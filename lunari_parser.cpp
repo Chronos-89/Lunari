@@ -40,6 +40,43 @@ static int _lunari_literal_depth_delta(const String &p_line, int p_depth) {
 	return p_depth;
 }
 
+static int _lunari_inline_doc_comment_pos(const String &p_line) {
+	bool in_string = false;
+	char32_t quote = 0;
+	bool escaped = false;
+	for (int i = 0; i + 1 < p_line.length(); i++) {
+		const char32_t c = p_line[i];
+		if (in_string) {
+			if (escaped) {
+				escaped = false;
+			} else if (c == '\\') {
+				escaped = true;
+			} else if (c == quote) {
+				in_string = false;
+				quote = 0;
+			}
+			continue;
+		}
+		if (c == '"' || c == '\'') {
+			in_string = true;
+			quote = c;
+			continue;
+		}
+		if (c == '#' && p_line[i + 1] == '#') {
+			return i;
+		}
+	}
+	return -1;
+}
+
+static String _lunari_strip_inline_doc_comment(const String &p_line) {
+	const int doc_pos = _lunari_inline_doc_comment_pos(p_line);
+	if (doc_pos <= 0) {
+		return p_line;
+	}
+	return p_line.substr(0, doc_pos).strip_edges();
+}
+
 static Vector<String> _lunari_join_multiline_literals(const Vector<String> &p_lines) {
 	Vector<String> logical_lines;
 	String current;
@@ -138,7 +175,7 @@ static bool _lunari_is_annotation_start(const String &p_line) {
 		ident_end++;
 	}
 	const String annotation_name = p_line.substr(1, ident_end - 1);
-	if (annotation_name != "tool" && annotation_name != "export" && annotation_name != "export_range" && annotation_name != "export_enum" && annotation_name != "export_flags" && annotation_name != "export_flags_2d_render" && annotation_name != "export_flags_2d_physics" && annotation_name != "export_flags_2d_navigation" && annotation_name != "export_flags_3d_render" && annotation_name != "export_flags_3d_physics" && annotation_name != "export_flags_3d_navigation" && annotation_name != "export_flags_avoidance" && annotation_name != "export_file" && annotation_name != "export_dir" && annotation_name != "export_global_file" && annotation_name != "export_global_dir" && annotation_name != "export_save_file" && annotation_name != "export_global_save_file" && annotation_name != "export_multiline" && annotation_name != "export_exp_easing" && annotation_name != "export_color_no_alpha" && annotation_name != "export_placeholder" && annotation_name != "export_node_path" && annotation_name != "export_resource_type" && annotation_name != "export_storage" && annotation_name != "export_group" && annotation_name != "export_subgroup" && annotation_name != "export_category" && annotation_name != "onready" && annotation_name != "rpc") {
+	if (annotation_name != "abstract" && annotation_name != "icon" && annotation_name != "static_unload" && annotation_name != "tool" && annotation_name != "export" && annotation_name != "export_range" && annotation_name != "export_enum" && annotation_name != "export_flags" && annotation_name != "export_flags_2d_render" && annotation_name != "export_flags_2d_physics" && annotation_name != "export_flags_2d_navigation" && annotation_name != "export_flags_3d_render" && annotation_name != "export_flags_3d_physics" && annotation_name != "export_flags_3d_navigation" && annotation_name != "export_flags_avoidance" && annotation_name != "export_file" && annotation_name != "export_file_path" && annotation_name != "export_dir" && annotation_name != "export_global_file" && annotation_name != "export_global_dir" && annotation_name != "export_save_file" && annotation_name != "export_global_save_file" && annotation_name != "export_multiline" && annotation_name != "export_exp_easing" && annotation_name != "export_color_no_alpha" && annotation_name != "export_placeholder" && annotation_name != "export_node_path" && annotation_name != "export_resource_type" && annotation_name != "export_storage" && annotation_name != "export_custom" && annotation_name != "export_tool_button" && annotation_name != "export_group" && annotation_name != "export_subgroup" && annotation_name != "export_category" && annotation_name != "warning_ignore" && annotation_name != "warning_ignore_start" && annotation_name != "warning_ignore_restore" && annotation_name != "onready" && annotation_name != "rpc") {
 		return false;
 	}
 	int next = ident_end;
@@ -186,6 +223,17 @@ static bool _lunari_pop_leading_annotation(String &r_line, String &r_annotation)
 	r_annotation = line.substr(0, end).strip_edges();
 	r_line = line.substr(end).strip_edges();
 	return true;
+}
+
+static bool _lunari_has_annotation(const Vector<String> &p_annotations, const String &p_name) {
+	const String needle = "@" + p_name;
+	for (const String &annotation : p_annotations) {
+		String clean = annotation.strip_edges();
+		if (clean == needle || clean.begins_with(needle + "(") || clean.begins_with(needle + " ")) {
+			return true;
+		}
+	}
+	return false;
 }
 
 bool LunariParser::_line_starts_with_keyword(const String &p_line, const String &p_keyword) {
@@ -370,7 +418,7 @@ LunariAST::Node LunariParser::_parse_class_like(const String &p_line, int p_line
 	LunariAST::Node node;
 	node.line = p_line_number;
 	node.raw = p_line;
-	String rest = p_line;
+	String rest = _lunari_strip_inline_doc_comment(p_line);
 	if (_line_starts_with_keyword(rest, "abstract")) {
 		node.is_abstract = true;
 		rest = rest.substr(8).strip_edges();
@@ -408,7 +456,7 @@ LunariAST::Node LunariParser::_parse_const(const String &p_line, int p_line_numb
 	node.kind = LunariAST::Node::NODE_CONST;
 	node.line = p_line_number;
 	node.raw = p_line;
-	String declaration = p_line.strip_edges();
+	String declaration = _lunari_strip_inline_doc_comment(p_line).strip_edges();
 	if (_line_starts_with_keyword(declaration, "public")) {
 		node.is_public = true;
 		declaration = declaration.substr(6).strip_edges();
@@ -442,7 +490,7 @@ LunariAST::Node LunariParser::_parse_enum(const String &p_line, int p_line_numbe
 	node.kind = LunariAST::Node::NODE_ENUM;
 	node.line = p_line_number;
 	node.raw = p_line;
-	String declaration = p_line.strip_edges();
+	String declaration = _lunari_strip_inline_doc_comment(p_line).strip_edges();
 	if (_line_starts_with_keyword(declaration, "enum")) {
 		declaration = declaration.substr(4).strip_edges();
 	}
@@ -475,7 +523,7 @@ LunariAST::Node LunariParser::_parse_field(const String &p_line, int p_line_numb
 	node.kind = LunariAST::Node::NODE_FIELD;
 	node.line = p_line_number;
 	node.raw = p_line;
-	String declaration = p_line.strip_edges();
+	String declaration = _lunari_strip_inline_doc_comment(p_line).strip_edges();
 	if (_line_starts_with_keyword(declaration, "public")) {
 		node.is_public = true;
 		declaration = declaration.substr(6).strip_edges();
@@ -506,7 +554,7 @@ LunariAST::Node LunariParser::_parse_method(const String &p_line, int p_line_num
 	node.kind = LunariAST::Node::NODE_METHOD;
 	node.line = p_line_number;
 	node.raw = p_line;
-	String declaration = p_line.strip_edges();
+	String declaration = _lunari_strip_inline_doc_comment(p_line).strip_edges();
 	if (_line_starts_with_keyword(declaration, "abstract")) {
 		node.is_abstract = true;
 		declaration = declaration.substr(8).strip_edges();
@@ -841,7 +889,9 @@ void LunariParser::_parse_block(const Vector<String> &p_lines, int &r_index, Vec
 			r_nodes.push_back(node);
 			continue;
 		}
-		if (line.length() > 0 && line[0] >= 'A' && line[0] <= 'Z' && line.find("=") > 0) {
+		int uppercase_equals = line.find("=");
+		String uppercase_lhs = uppercase_equals > 0 ? line.substr(0, uppercase_equals).strip_edges() : String();
+		if (line.length() > 0 && line[0] >= 'A' && line[0] <= 'Z' && uppercase_equals > 0 && !uppercase_lhs.contains(".")) {
 			node = _parse_const(line, line_number);
 			node.annotations = pending_annotations;
 			pending_annotations.clear();
@@ -906,7 +956,7 @@ void LunariParser::_parse_block(const Vector<String> &p_lines, int &r_index, Vec
 			node.raw = line;
 			node.annotations = pending_annotations;
 			pending_annotations.clear();
-			String declaration = line.substr(6).strip_edges();
+			String declaration = _lunari_strip_inline_doc_comment(line).substr(6).strip_edges();
 			int paren = declaration.find("(");
 			if (paren >= 0 && declaration.ends_with(")")) {
 				node.name = declaration.substr(0, paren).strip_edges();
@@ -925,6 +975,9 @@ void LunariParser::_parse_block(const Vector<String> &p_lines, int &r_index, Vec
 		if (line.begins_with("class ") || line.begins_with("abstract class ") || line.begins_with("module ")) {
 			node = _parse_class_like(line, line_number);
 			node.annotations = pending_annotations;
+			if (_lunari_has_annotation(node.annotations, "abstract")) {
+				node.is_abstract = true;
+			}
 			pending_annotations.clear();
 			r_index++;
 			_parse_block(p_lines, r_index, node.children, "end");
@@ -979,6 +1032,9 @@ void LunariParser::_parse_block(const Vector<String> &p_lines, int &r_index, Vec
 		if (_line_starts_with_keyword(member_line, "def")) {
 			node = _parse_method(line, line_number);
 			node.annotations = pending_annotations;
+			if (_lunari_has_annotation(node.annotations, "abstract")) {
+				node.is_abstract = true;
+			}
 			pending_annotations.clear();
 			r_index++;
 			_parse_block(p_lines, r_index, node.children, "end");
@@ -1097,7 +1153,7 @@ LunariParser::Result LunariParser::parse(const String &p_source) const {
 	for (int i = 0; i < lines.size(); i++) {
 		const int line_number = i + 1;
 		String line = lines[i].strip_edges();
-		if (line.is_empty() || line.begins_with("#") || line.begins_with("require ") || line.begins_with("require_relative ")) {
+		if (line.is_empty() || line.begins_with("#") || line.begins_with("require ") || line.begins_with("require_relative ") || _lunari_is_annotation_start(line)) {
 			continue;
 		}
 		if (line.begins_with("type ") || _line_starts_with_keyword(line, "attr_reader") || _line_starts_with_keyword(line, "attr_writer") || _line_starts_with_keyword(line, "attr_accessor") || _line_starts_with_keyword(line, "alias") || _line_starts_with_keyword(line, "alias_method") || _line_starts_with_keyword(line, "define_method") || _line_starts_with_keyword(line, "undef") || _line_starts_with_keyword(line, "undef_method") || _line_starts_with_keyword(line, "remove_method")) {

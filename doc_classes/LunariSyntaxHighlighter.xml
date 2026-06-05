@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="LunariSyntaxHighlighter" inherits="EditorSyntaxHighlighter" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A Lunari syntax highlighter for the Godot script editor.
+	</brief_description>
+	<description>
+		Highlights Lunari/Ruby keywords, Godot API types, utility functions, annotations, comments, strings, and word-list literals in [code].lu[/code] scripts.
+		[b]Note:[/b] This class is editor-only because it relies on editor theme settings.
+	</description>
+	<tutorials>
+	</tutorials>
+</class>

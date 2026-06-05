@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="LunariLanguageServer" inherits="RefCounted" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../doc/tools/make_rst.xsd">
+	<brief_description>
+		Lunari text-document and workspace service for editor/LSP-style tooling.
+	</brief_description>
+	<description>
+		Tracks open Lunari documents and exposes diagnostics, document links, document symbols, workspace symbols, completion and completion-item resolve, signature help, native symbol inspection, references, definition, rename, hover, and workspace snapshot payloads shaped for language-server clients.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="initialize">
+			<return type="Dictionary" />
+			<param index="0" name="params" type="Dictionary" default="{}" />
+			<description>
+				Returns Lunari language-server capabilities using the same LSP-shaped provider objects as Godot's GDScript language server where Lunari currently supports the surface. Text documents advertise full-document sync with open/close and save options. Completion advertises resolve support and the trigger characters [code].[/code], [code]$[/code], [code]'[/code], and [code]"[/code]. Signature help advertises [code]([/code] and [code],[/code] triggers. Rename advertises prepare support, document links advertise no resolve step, and unsupported providers are emitted as explicit [code]false[/code] or empty provider objects.
+			</description>
+		</method>
+		<method name="did_open">
+			<return type="void" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Opens and stores the full source for a [code]textDocument.uri[/code].
+			</description>
+		</method>
+		<method name="did_change">
+			<return type="void" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Updates the stored source from a full-document content change.
+			</description>
+		</method>
+		<method name="did_close">
+			<return type="void" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Removes an open document from the service workspace.
+			</description>
+		</method>
+		<method name="get_open_documents">
+			<return type="Dictionary" />
+			<description>
+				Returns the currently tracked open document sources by normalized resource path.
+			</description>
+		</method>
+		<method name="get_workspace_cache_stats">
+			<return type="Dictionary" />
+			<description>
+				Returns diagnostic counters for service-owned workspace caches, including document-snapshot, completion, signature-help, references, symbol-index, and diagnostics hit/miss counts, validity, fingerprint lengths, cached document count, cached completion item count, cached signature count, cached reference count, cached symbol count, and cached diagnostic count.
+			</description>
+		</method>
+		<method name="get_workspace_snapshot">
+			<return type="Dictionary" />
+			<param index="0" name="params" type="Dictionary" default="{}" />
+			<description>
+				Aggregates the open workspace into the same LSP-style snapshot payload exposed by [method LunariScript.get_lsp_workspace_snapshot], including diagnostics, workspace symbols, completion, signature help, definition, references, rename readiness, and hover metadata for the requested cursor position.
+			</description>
+		</method>
+		<method name="publish_diagnostics">
+			<return type="Dictionary" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Returns diagnostics for the requested open document.
+			</description>
+		</method>
+		<method name="workspace_diagnostics">
+			<return type="Dictionary" />
+			<param index="0" name="params" type="Dictionary" default="{}" />
+			<description>
+				Returns workspace diagnostics for project [code].lu[/code] files plus open documents, with open documents overriding disk contents.
+			</description>
+		</method>
+		<method name="document_symbol">
+			<return type="Array" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Returns document symbols for the requested open document, with path and URI metadata suitable for LSP clients.
+			</description>
+		</method>
+		<method name="completion">
+			<return type="Dictionary" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Returns LSP-shaped completion items at the requested document position, reusing the service completion cache while the workspace and cursor prefix are unchanged.
+			</description>
+		</method>
+		<method name="completion_resolve">
+			<return type="Dictionary" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Resolves a completion item with documentation and detail metadata.
+			</description>
+		</method>
+		<method name="document_link">
+			<return type="Array" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Returns clickable document links for existing Lunari script and resource string literals.
+			</description>
+		</method>
+		<method name="workspace_symbol">
+			<return type="Array" />
+			<param index="0" name="params" type="Dictionary" default="{}" />
+			<description>
+				Returns filtered workspace symbols for Lunari files in the project plus open documents, including LSP-style location metadata.
+			</description>
+		</method>
+		<method name="signature_help">
+			<return type="Dictionary" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Returns LSP-shaped signature help at the requested document position, reusing the service signature-help cache while the workspace and cursor offset are unchanged.
+			</description>
+		</method>
+		<method name="native_symbol">
+			<return type="Variant" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Returns native Godot class or member metadata for [code]native_class[/code] and an optional [code]member[/code]. Object-derived classes are resolved through Godot's native class API snapshot, while built-in Variant types such as [code]Color[/code] are resolved through Godot's native Variant metadata and report [code]source = "variant_api"[/code].
+			</description>
+		</method>
+		<method name="references">
+			<return type="Array" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Returns cursor-anchored references across the open workspace, reusing the service references cache while the workspace and anchor symbol position are unchanged.
+			</description>
+		</method>
+		<method name="prepare_rename">
+			<return type="Dictionary" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Returns whether the selected symbol can be renamed, plus placeholder, range, reference count, and declaration metadata when available.
+			</description>
+		</method>
+		<method name="rename">
+			<return type="Dictionary" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Returns renamed file contents and LSP-style document changes for the selected symbol.
+			</description>
+		</method>
+		<method name="definition">
+			<return type="Dictionary" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Returns the cursor-anchored symbol definition across the open workspace, including resolved receiver/member definitions when available.
+			</description>
+		</method>
+		<method name="hover">
+			<return type="Variant" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Returns structured hover metadata for the cursor-anchored symbol, including resolved workspace member definitions when available.
+			</description>
+		</method>
+	</methods>
+</class>

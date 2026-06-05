@@ -416,6 +416,7 @@ Lunari currently includes:
 - Project symbol index with completion entries, duplicate detection, category buckets, and per-file lookup tables.
 - Project dependency graph with load order, missing dependency detection, cycles, and reload invalidation order.
 - Project readiness analysis for Lunari/GDScript mix, migration fixes, warnings, dependencies, and replacement score.
+- Dedicated `LunariSyntaxHighlighter` registration for `.lu` scripts in the Godot script editor.
 - Bytecode disassembly.
 - Godot API snapshot generation.
 
@@ -424,16 +425,49 @@ The editor-facing helper methods are exposed on `LunariScript`, so tools can cal
 | Method | Purpose |
 |---|---|
 | `validate_source_summary(code, path)` | Syntax/analyzer validation with errors, warnings, safe lines, help text, and source fixes. |
-| `complete_source_code(code)` | Code-completion options for language keywords, Godot API members, constants, annotations, and local script symbols. |
+| `get_lsp_diagnostics(code, path)` | LSP-shaped diagnostics payload with file URI, zero-based ranges, severity, source, code/category, and fix metadata. |
+| `get_project_lsp_diagnostics(sources)` | Workspace-style diagnostics aggregation with per-file LSP payloads, `by_path`, and project diagnostic/error/warning counts. |
+| `get_lsp_workspace_snapshot(sources, path = "", code = "", cursor = -1, symbol = "", line = 0, column = 0)` | LSP/workspace-shaped aggregate payload for diagnostics, document metadata, workspace symbols/completions, project graph, active completion/signature help, scoped definition/references, and rename readiness. |
+| `complete_source_code(code)` | Code-completion options for language keywords, Godot API members, constants, annotations, native class/singleton receivers, local script symbols, active-scope parameters/locals, inherited user-class receiver members, project input actions in `Input`/`InputMap` contexts, and `res://` file paths in load/preload contexts. |
+| `complete_source_code_for_owner(code, owner)` | Owner-aware completion that adds scene node paths for `$Node`, `get_node("...")`, and `has_node("...")` contexts. |
+| `get_signature_help(code, cursor = -1)` | Active-call signature help for Godot API methods, Lunari utility functions, typed user methods, and built-in Variant constructors. |
+| `get_lsp_completion_items(code, path = "")` | LSP-shaped completion list payload (`isIncomplete`, `items`, `label`, `kind`, `insertText`, `data`) backed by Lunari's completion resolver. |
+| `get_lsp_signature_help(code, cursor = -1)` | LSP-shaped signature help payload (`signatures`, `activeSignature`, `activeParameter`) backed by Lunari's signature resolver. |
 | `get_hover_summary(symbol, owner_class = "")` | Structured hover result for Lunari symbols, language annotations, and Godot API members. |
 | `get_documentation_index(query = "", class = "")` | Searchable language, script, and Godot API documentation entries. |
+| `find_scoped_references(symbol, line, column, code)` | Source-local references resolved by symbol identity for fields, locals, parameters, methods, and classes. |
+| `go_to_scoped_definition(symbol, line, column, code)` | Source-local definition lookup anchored at a cursor position. |
+| `rename_scoped_symbol(old_name, new_name, line, column, code)` | Source-local rename that avoids same-named unrelated symbols in other scopes. |
 | `collect_project_outline(sources)` | Cross-file symbol outline with source paths. |
 | `build_project_symbol_index(sources)` | Cross-file symbol/completion index with `by_name`, `by_kind`, `by_path`, duplicate, and graph metadata. |
 | `find_project_references(sources, symbol)` | Cross-file references. |
+| `find_scoped_project_references(sources, symbol, path, line, column)` | Cursor-anchored cross-file references that keep locals/parameters file-local and avoid same-named unrelated members. |
 | `go_to_project_definition(sources, symbol)` | First matching project definition with path and line. |
+| `go_to_scoped_project_definition(sources, symbol, path, line, column)` | Cursor-anchored project definition lookup for the selected symbol identity. |
 | `rename_project_symbol(sources, old_name, new_name)` | Cross-file rename result with updated source map. |
+| `rename_scoped_project_symbol(sources, old_name, new_name, path, line, column)` | Cursor-anchored cross-file rename that avoids same-named locals, parameters, and unrelated member owners. |
 | `analyze_project_graph(sources, changed_paths = [])` | Dependency graph, load order, cycles, missing dependencies, and reload invalidation order. |
 | `analyze_project_readiness(sources)` | Migration/replacement summary, warnings, fix count, dependency graph, and readiness score. |
+
+`LunariLanguageServer` is the first native service layer above those helpers. It keeps open-document state and exposes LSP-shaped text-document/workspace operations:
+
+| Method | Purpose |
+|---|---|
+| `initialize(params = {})` | Returns GDScript-shaped LSP capabilities for diagnostics, completion and completion resolve, signature help, native symbols, document links/symbols, workspace symbols, definition, references, rename, and hover. Text documents advertise full-document sync with open/close and save options; completion advertises resolve support plus `.`, `$`, `'`, and `"` triggers; signature help advertises `(` and `,`; rename advertises prepare support; unsupported providers are explicit `false` or empty provider objects. |
+| `did_open(params)` / `did_change(params)` / `did_close(params)` | Tracks open `textDocument.uri` sources and full-document content changes. |
+| `publish_diagnostics(params)` | Returns diagnostics for the current open document source. |
+| `workspace_diagnostics(params = {})` | Returns workspace diagnostics for project `.lu` files plus open documents, with open unsaved documents overriding disk contents. |
+| `document_symbol(params)` | Returns outline entries with path/URI metadata. |
+| `document_link(params)` | Returns clickable document links for existing script/resource string literals such as `require`, `load`, `preload`, and `res://` paths. |
+| `workspace_symbol(params = {})` | Returns filtered workspace symbols for project `.lu` files plus open documents, with LSP-style locations. |
+| `completion(params)` | Returns LSP completion items at `position.line` / `position.character`. |
+| `completion_resolve(params)` | Resolves a completion item with documentation/detail metadata from Lunari hover/docs helpers. |
+| `signature_help(params)` | Returns LSP signature help with active parameter tracking. |
+| `native_symbol(params)` | Returns native Godot class/member metadata for `native_class` plus an optional `member`; Object classes use the native class API snapshot, and built-in Variant types like `Color` use native `Variant` metadata with `source = "variant_api"`. |
+| `references(params)` / `definition(params)` | Resolves cursor-anchored symbols across the open workspace. |
+| `prepare_rename(params)` / `rename(params)` | Validates a rename target and returns updated file contents plus LSP-style full-document changes. |
+| `hover(params)` | Returns structured hover metadata for the cursor-anchored symbol, including resolved workspace member definitions when available. |
+| `get_workspace_snapshot(params = {})` | Aggregates open documents into the same workspace snapshot payload exposed by `LunariScript`. |
 
 ## Benchmarks
 

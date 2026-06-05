@@ -74,11 +74,11 @@ void LunariUtilityCallable::call(const Variant **p_arguments, int p_argcount, Va
 
 LunariUtilityCallable::LunariUtilityCallable(const StringName &p_function_name) {
 	function_name = p_function_name;
-	if (LunariUtilityFunctions::function_exists(function_name)) {
+	if (Variant::has_utility_function(function_name)) {
+		type = TYPE_GLOBAL;
+	} else if (LunariUtilityFunctions::function_exists(function_name)) {
 		type = TYPE_LUNARI;
 		lunari_function = LunariUtilityFunctions::get_function(function_name);
-	} else if (Variant::has_utility_function(function_name)) {
-		type = TYPE_GLOBAL;
 	} else {
 		ERR_PRINT(vformat(R"(Unknown Lunari utility function "%s".)", function_name));
 	}

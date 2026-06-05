@@ -49,6 +49,8 @@ public:
 private:
 	static HashMap<StringName, ClassInfo> classes;
 	static bool generated;
+	static uint32_t generated_core_api_hash;
+	static uint32_t generated_editor_api_hash;
 
 	static void _generate_class(const StringName &p_class);
 	static void _apply_metadata_patches();

@@ -12,7 +12,8 @@ static bool _starts_with_keyword(const String &p_line, const String &p_keyword) 
 Vector<String> LunariVim::get_keywords() {
 	static const char *keywords[] = {
 		"require", "require_relative", "class", "module", "def", "end", "public", "private", "return",
-		"if", "elsif", "else", "case", "when", "begin", "rescue", "ensure", "unless", "while", "until", "for", "in", "true", "false", "nil", "self", "super",
+		"if", "elsif", "else", "case", "when", "match", "begin", "rescue", "ensure", "unless", "while", "until", "for", "in",
+		"break", "next", "redo", "yield", "await", "true", "false", "nil", "self", "super",
 		"sig", "params", "returns", "void", "T", "String", "Integer", "Float", "Boolean", "Symbol", "Any", "never",
 		"Array", "Hash", "Set", "Range", "Numeric", "Proc", "Lambda", "Object",
 	};

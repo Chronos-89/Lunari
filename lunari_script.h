@@ -126,6 +126,7 @@ class LunariCoroutineState : public RefCounted {
 	Variant awaited;
 	Variant result;
 	bool completed = false;
+	bool signal_bound = false;
 
 protected:
 	static void _bind_methods();
@@ -164,7 +165,7 @@ public:
 	bool get(const StringName &p_name, Variant &r_ret) const override;
 	void get_property_list(List<PropertyInfo> *p_properties) const override;
 	Variant::Type get_property_type(const StringName &p_name, bool *r_is_valid = nullptr) const override;
-	void validate_property(PropertyInfo &p_property) const override {}
+	void validate_property(PropertyInfo &p_property) const override;
 	bool property_can_revert(const StringName &p_name) const override;
 	bool property_get_revert(const StringName &p_name, Variant &r_ret) const override;
 	Object *get_owner() override { return owner; }
@@ -172,13 +173,16 @@ public:
 	bool has_method(const StringName &p_method) const override;
 	Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) override;
 	void notification(int p_notification, bool p_reversed = false) override;
+	String to_string(bool *r_valid) override;
 	Ref<Script> get_script() const override;
+	const Variant get_rpc_config() const override;
 	ScriptLanguage *get_language() override;
 
 	Variant get_field(const StringName &p_name) const;
 	void set_field(const StringName &p_name, const Variant &p_value);
 	bool has_field(const StringName &p_name) const;
 	Array get_field_names() const;
+	bool call_property_hook(const StringName &p_method, const Vector<Variant> &p_args, Variant *r_return_value) const;
 	bool try_get_cached_fast_proc_affine(const StringName &p_field_name, const Variant &p_arg, Variant *r_return_value) const;
 	void cache_fast_proc_affine(const StringName &p_field_name, int64_t p_mul, int64_t p_add);
 	void track_created_object(Object *p_object);
@@ -196,6 +200,11 @@ class LunariScript : public Script {
 	friend class LunariExpressionParser;
 
 public:
+	static void sync_project_input_action(const StringName &p_action);
+	static void sync_project_input_actions();
+	static void sync_project_input_call(Object *p_object, const StringName &p_method, const Vector<Variant> &p_args);
+	static StringName input_action_from_variant(const Variant &p_value);
+
 	struct FieldInfo {
 		StringName name;
 		StringName type;
@@ -274,8 +283,10 @@ public:
 		int64_t first_mul = 1;
 		int64_t first_add = 0;
 		String first_string_prefix;
+		StringName first_string_name;
 		Vector<String> first_small_int_strings;
 		String first_field_name;
+		StringName first_field_string_name;
 		String first_property_name;
 		Vector<String> first_string_values;
 		int second_expression_kind = 0;
@@ -320,6 +331,9 @@ private:
 	Vector<LunariAnalyzer::Diagnostic> diagnostics;
 	bool tool_script = false;
 	bool abstract_script = false;
+	bool static_unload_script = false;
+	String simplified_icon_path;
+	bool placeholder_fallback_enabled = false;
 
 	void _parse();
 	void _update_placeholder_exports(PlaceHolderScriptInstance *p_placeholder = nullptr);
@@ -361,6 +375,10 @@ private:
 protected:
 	static void _bind_methods();
 	void _placeholder_erased(PlaceHolderScriptInstance *p_placeholder) override;
+	void _get_property_list(List<PropertyInfo> *p_properties) const;
+	bool _get(const StringName &p_name, Variant &r_ret) const;
+	bool _set(const StringName &p_name, const Variant &p_value);
+	Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) override;
 
 public:
 	static Variant::Type variant_type_for_lunari_type(const StringName &p_type);
@@ -390,6 +408,7 @@ public:
 #endif
 
 	bool has_method(const StringName &p_method) const override;
+	bool has_static_method(const StringName &p_method) const override;
 	MethodInfo get_method_info(const StringName &p_method) const override;
 	bool is_tool() const override;
 	bool is_valid() const override;
@@ -400,9 +419,12 @@ public:
 	bool get_property_default_value(const StringName &p_property, Variant &r_value) const override;
 	void update_exports() override;
 	int get_member_line(const StringName &p_member) const override;
+	void get_constants(HashMap<StringName, Variant> *p_constants) override;
 	void get_members(HashSet<StringName> *p_members) override;
 	void get_script_method_list(List<MethodInfo> *p_list) const override;
+	int get_script_method_argument_count(const StringName &p_method, bool *r_is_valid = nullptr) const override;
 	void get_script_property_list(List<PropertyInfo> *p_list) const override;
+	bool is_placeholder_fallback_enabled() const override { return placeholder_fallback_enabled; }
 	const Variant get_rpc_config() const override;
 
 	const Vector<FieldInfo> &get_lunari_fields();
@@ -420,21 +442,40 @@ public:
 	String format_source_code(const String &p_code = String()) const;
 	Array collect_outline(const String &p_code = String()) const;
 	Array find_references(const StringName &p_symbol, const String &p_code = String()) const;
+	Array find_scoped_references(const StringName &p_symbol, int p_line = 0, int p_column = 0, const String &p_code = String()) const;
 	Dictionary rename_symbol(const StringName &p_old_name, const StringName &p_new_name, const String &p_code = String()) const;
+	Dictionary rename_scoped_symbol(const StringName &p_old_name, const StringName &p_new_name, int p_line = 0, int p_column = 0, const String &p_code = String()) const;
 	Dictionary go_to_definition(const StringName &p_symbol, const String &p_code = String()) const;
+	Dictionary go_to_scoped_definition(const StringName &p_symbol, int p_line = 0, int p_column = 0, const String &p_code = String()) const;
 	String hover_symbol(const StringName &p_symbol, const StringName &p_receiver_type = StringName(), const String &p_code = String()) const;
 	Dictionary get_hover_summary(const StringName &p_symbol, const StringName &p_receiver_type = StringName(), const String &p_code = String()) const;
+	Dictionary lookup_symbol_in_code(const StringName &p_symbol, const String &p_code = String()) const;
 	Dictionary complete_source_code(const String &p_code = String()) const;
+	Dictionary complete_source_code_for_owner(const String &p_code, Object *p_owner) const;
+	Dictionary get_signature_help(const String &p_code = String(), int p_cursor = -1) const;
+	Dictionary get_signature_help_with_sources(const Dictionary &p_sources, const String &p_code = String(), int p_cursor = -1) const;
+	Dictionary get_lsp_completion_items(const String &p_code = String(), const String &p_path = String()) const;
+	Dictionary get_lsp_completion_items_with_sources(const Dictionary &p_sources, const String &p_code = String(), const String &p_path = String()) const;
+	Dictionary get_lsp_signature_help(const String &p_code = String(), int p_cursor = -1) const;
+	Dictionary get_lsp_signature_help_with_sources(const Dictionary &p_sources, const String &p_code = String(), int p_cursor = -1) const;
+	Dictionary get_lsp_workspace_snapshot(const Dictionary &p_sources, const String &p_path = String(), const String &p_code = String(), int p_cursor = -1, const StringName &p_symbol = StringName(), int p_line = 0, int p_column = 0) const;
 	Dictionary explain_diagnostic(const String &p_message) const;
 	Dictionary get_godot_api_member_summary(const StringName &p_class, const StringName &p_member) const;
+	Error write_godot_api_snapshot(const String &p_path = String()) const;
 	String validate_script_path(const String &p_path) const;
 	Array get_template_summary(const StringName &p_base_type = StringName("Node")) const;
 	Dictionary validate_source_summary(const String &p_code, const String &p_path = String()) const;
+	Dictionary get_lsp_diagnostics(const String &p_code, const String &p_path = String()) const;
+	Dictionary get_lsp_diagnostics_with_workspace_symbols(const String &p_code, const String &p_path, const Array &p_workspace_symbols) const;
+	Dictionary get_project_lsp_diagnostics(const Dictionary &p_sources) const;
 	Array collect_project_outline(const Dictionary &p_sources) const;
 	Dictionary build_project_symbol_index(const Dictionary &p_sources) const;
 	Array find_project_references(const Dictionary &p_sources, const StringName &p_symbol) const;
+	Array find_scoped_project_references(const Dictionary &p_sources, const StringName &p_symbol, const String &p_path, int p_line = 0, int p_column = 0) const;
 	Dictionary rename_project_symbol(const Dictionary &p_sources, const StringName &p_old_name, const StringName &p_new_name) const;
+	Dictionary rename_scoped_project_symbol(const Dictionary &p_sources, const StringName &p_old_name, const StringName &p_new_name, const String &p_path, int p_line = 0, int p_column = 0) const;
 	Dictionary go_to_project_definition(const Dictionary &p_sources, const StringName &p_symbol) const;
+	Dictionary go_to_scoped_project_definition(const Dictionary &p_sources, const StringName &p_symbol, const String &p_path, int p_line = 0, int p_column = 0) const;
 	Dictionary analyze_project_graph(const Dictionary &p_sources, const Array &p_changed_paths = Array()) const;
 	Dictionary analyze_project_readiness(const Dictionary &p_sources) const;
 	Array suggest_source_fixes(const String &p_code, const String &p_path = String()) const;
@@ -443,10 +484,21 @@ public:
 	Dictionary apply_project_source_fixes(const Dictionary &p_sources, const Array &p_fixes) const;
 	bool debug_tokenizer_roundtrip(const String &p_code, bool p_compressed = false) const;
 	Dictionary debug_language_state_probe() const;
+	Dictionary debug_global_constant_runtime_probe();
 	Dictionary debug_lookup_code_probe() const;
+	Dictionary debug_export_node_path_global_class_completion_probe() const;
+	Dictionary debug_autoload_tooling_probe() const;
 	Dictionary debug_stack_locals_overhead_probe() const;
 	Dictionary debug_profile_state_probe() const;
 	Dictionary debug_placeholder_state_probe() const;
+	Dictionary debug_rpc_instance_config_probe() const;
+	Dictionary debug_classes_used_probe(const String &p_path) const;
+	Dictionary debug_method_argument_count_probe() const;
+	Dictionary debug_native_cpp_api_surface_probe() const;
+	Dictionary debug_can_instantiate_gate_probe() const;
+	Dictionary debug_editor_resource_contract_probe() const;
+	Dictionary debug_syntax_token_scan(const String &p_line) const;
+	Dictionary debug_syntax_highlighter_multiline_probe() const;
 	Variant construct_user_class(const StringName &p_class_name, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr);
 	Variant call_user_method(const Ref<LunariObject> &p_object, const StringName &p_method, const Vector<Variant> &p_args, LunariScriptInstance *p_instance, HashMap<StringName, Variant> *p_locals, bool *r_valid = nullptr, bool p_allow_private = false);
 	void initialize_instance(LunariScriptInstance *p_instance);
@@ -520,6 +572,8 @@ public:
 	void add_global_constant(const StringName &p_variable, const Variant &p_value) override;
 	void add_named_global_constant(const StringName &p_name, const Variant &p_value) override;
 	void remove_named_global_constant(const StringName &p_name) override;
+	bool has_global_constant(const StringName &p_name) const;
+	Variant get_global_constant(const StringName &p_name, bool *r_valid = nullptr) const;
 	bool can_inherit_from_file() const override { return true; }
 	bool handles_global_class_type(const String &p_type) const override;
 	String get_global_class_name(const String &p_path, String *r_base_type = nullptr, String *r_icon_path = nullptr, bool *r_is_abstract = nullptr, bool *r_is_tool = nullptr) const override;

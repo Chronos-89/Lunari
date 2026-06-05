@@ -12,6 +12,8 @@
 
 HashMap<StringName, LunariGodotApi::ClassInfo> LunariGodotApi::classes;
 bool LunariGodotApi::generated = false;
+uint32_t LunariGodotApi::generated_core_api_hash = 0;
+uint32_t LunariGodotApi::generated_editor_api_hash = 0;
 
 static StringName _lunari_godot_api_type_surface(const StringName &p_type) {
 	if (p_type == "bool") {
@@ -262,7 +264,7 @@ void LunariGodotApi::_generate_class(const StringName &p_class) {
 	}
 
 	List<MethodInfo> methods;
-	ClassDB::get_method_list(p_class, &methods, true, true);
+	ClassDB::get_method_list(p_class, &methods, false, true);
 	for (const MethodInfo &method_info : methods) {
 		Method method;
 		method.info = method_info;
@@ -273,7 +275,63 @@ void LunariGodotApi::_generate_class(const StringName &p_class) {
 		method.default_arguments = method_info.default_arguments;
 		method.flags = method_info.flags;
 		method.bind = ClassDB::get_method(p_class, method_info.name);
-		info.methods[method_info.name] = method;
+		if (!info.methods.has(method_info.name)) {
+			info.methods[method_info.name] = method;
+		}
+	}
+
+	List<MethodInfo> inherited_methods;
+	ClassDB::get_method_list(p_class, &inherited_methods, false, true);
+	auto find_inherited_method_info = [&](const StringName &p_method, MethodInfo *r_method) -> bool {
+		for (const MethodInfo &method_info : inherited_methods) {
+			if (method_info.name == p_method) {
+				if (r_method) {
+					*r_method = method_info;
+				}
+				return true;
+			}
+		}
+		return false;
+	};
+
+	for (const KeyValue<StringName, PropertyInfo> &property_entry : info.properties) {
+		const StringName &property_name = property_entry.key;
+		const PropertyInfo &property = property_entry.value;
+
+		HashMap<StringName, StringName>::Iterator Getter = info.property_getters.find(property_name);
+		if (Getter && Getter->value != StringName() && !info.methods.has(Getter->value)) {
+			MethodInfo getter_info;
+			if (!find_inherited_method_info(Getter->value, &getter_info)) {
+				getter_info.name = Getter->value;
+				getter_info.return_val = property;
+			}
+			Method getter_method;
+			getter_method.info = getter_info;
+			getter_method.return_type = type_from_property(getter_info.return_val, true);
+			getter_method.flags = getter_info.flags;
+			getter_method.bind = ClassDB::get_method(p_class, Getter->value);
+			info.methods[Getter->value] = getter_method;
+		}
+
+		HashMap<StringName, StringName>::Iterator Setter = info.property_setters.find(property_name);
+		if (Setter && Setter->value != StringName() && !info.methods.has(Setter->value)) {
+			MethodInfo setter_info;
+			if (!find_inherited_method_info(Setter->value, &setter_info)) {
+				setter_info.name = Setter->value;
+				PropertyInfo argument = property;
+				argument.name = property_name;
+				setter_info.arguments.push_back(argument);
+			}
+			Method setter_method;
+			setter_method.info = setter_info;
+			setter_method.return_type = "void";
+			for (const PropertyInfo &argument : setter_info.arguments) {
+				setter_method.argument_types.push_back(type_from_property(argument));
+			}
+			setter_method.flags = setter_info.flags;
+			setter_method.bind = ClassDB::get_method(p_class, Setter->value);
+			info.methods[Setter->value] = setter_method;
+		}
 	}
 
 	List<MethodInfo> signals;
@@ -312,35 +370,194 @@ void LunariGodotApi::_generate_class(const StringName &p_class) {
 }
 
 void LunariGodotApi::_apply_metadata_patches() {
+	auto patch_method_return = [](ClassInfo &p_class, const StringName &p_method, const StringName &p_return_type) {
+		HashMap<StringName, Method>::Iterator MethodEntry = p_class.methods.find(p_method);
+		if (MethodEntry) {
+			MethodEntry->value.return_type = p_return_type;
+		}
+	};
+	auto patch_method_signature = [](ClassInfo &p_class, const StringName &p_method, const Vector<PropertyInfo> &p_arguments, const StringName &p_return_type) {
+		HashMap<StringName, Method>::Iterator MethodEntry = p_class.methods.find(p_method);
+		if (!MethodEntry) {
+			return;
+		}
+		MethodEntry->value.info.arguments.clear();
+		MethodEntry->value.argument_types.clear();
+		for (const PropertyInfo &argument : p_arguments) {
+			MethodEntry->value.info.arguments.push_back(argument);
+			MethodEntry->value.argument_types.push_back(type_from_property(argument));
+		}
+		MethodEntry->value.default_arguments.clear();
+		MethodEntry->value.return_type = p_return_type;
+	};
+
 	HashMap<StringName, ClassInfo>::Iterator InputClass = classes.find("Input");
 	if (InputClass) {
-		HashMap<StringName, Method>::Iterator GetVector = InputClass->value.methods.find("get_vector");
-		if (GetVector) {
-			GetVector->value.return_type = "Vector2";
-		}
-		HashMap<StringName, Method>::Iterator IsActionPressed = InputClass->value.methods.find("is_action_pressed");
-		if (IsActionPressed) {
-			IsActionPressed->value.return_type = "Boolean";
-		}
-		HashMap<StringName, Method>::Iterator IsActionJustPressed = InputClass->value.methods.find("is_action_just_pressed");
-		if (IsActionJustPressed) {
-			IsActionJustPressed->value.return_type = "Boolean";
-		}
-		HashMap<StringName, Method>::Iterator IsActionJustReleased = InputClass->value.methods.find("is_action_just_released");
-		if (IsActionJustReleased) {
-			IsActionJustReleased->value.return_type = "Boolean";
-		}
+		patch_method_return(InputClass->value, "is_anything_pressed", "Boolean");
+		patch_method_return(InputClass->value, "is_key_pressed", "Boolean");
+		patch_method_return(InputClass->value, "is_physical_key_pressed", "Boolean");
+		patch_method_return(InputClass->value, "is_key_label_pressed", "Boolean");
+		patch_method_return(InputClass->value, "is_mouse_button_pressed", "Boolean");
+		patch_method_return(InputClass->value, "is_joy_button_pressed", "Boolean");
+		patch_method_return(InputClass->value, "get_axis", "Float");
+		patch_method_return(InputClass->value, "get_vector", "Vector2");
+		patch_method_return(InputClass->value, "is_action_pressed", "Boolean");
+		patch_method_return(InputClass->value, "is_action_just_pressed", "Boolean");
+		patch_method_return(InputClass->value, "is_action_just_released", "Boolean");
+		patch_method_return(InputClass->value, "is_action_just_pressed_by_event", "Boolean");
+		patch_method_return(InputClass->value, "is_action_just_released_by_event", "Boolean");
+		patch_method_return(InputClass->value, "get_action_strength", "Float");
+		patch_method_return(InputClass->value, "get_action_raw_strength", "Float");
+		patch_method_return(InputClass->value, "is_joy_known", "Boolean");
+		patch_method_return(InputClass->value, "get_joy_axis", "Float");
+		patch_method_return(InputClass->value, "get_joy_name", "String");
+		patch_method_return(InputClass->value, "get_joy_guid", "String");
+		patch_method_return(InputClass->value, "get_joy_info", "Hash");
+		patch_method_return(InputClass->value, "should_ignore_device", "Boolean");
+		patch_method_return(InputClass->value, "get_connected_joypads", "Array");
+		patch_method_return(InputClass->value, "get_joy_vibration_strength", "Vector2");
+		patch_method_return(InputClass->value, "get_joy_vibration_duration", "Float");
+		patch_method_return(InputClass->value, "get_gravity", "Vector3");
+		patch_method_return(InputClass->value, "get_accelerometer", "Vector3");
+		patch_method_return(InputClass->value, "get_magnetometer", "Vector3");
+		patch_method_return(InputClass->value, "get_gyroscope", "Vector3");
+		patch_method_return(InputClass->value, "has_joy_light", "Boolean");
+		patch_method_return(InputClass->value, "get_last_mouse_velocity", "Vector2");
+		patch_method_return(InputClass->value, "get_last_mouse_screen_velocity", "Vector2");
+		patch_method_return(InputClass->value, "get_mouse_button_mask", "Integer");
+		patch_method_return(InputClass->value, "get_mouse_mode", "Integer");
+		patch_method_return(InputClass->value, "get_current_cursor_shape", "Integer");
+		patch_method_return(InputClass->value, "is_using_accumulated_input", "Boolean");
+		patch_method_return(InputClass->value, "is_emulating_mouse_from_touch", "Boolean");
+		patch_method_return(InputClass->value, "is_emulating_touch_from_mouse", "Boolean");
 	}
+	HashMap<StringName, ClassInfo>::Iterator ProjectSettingsClass = classes.find("ProjectSettings");
+	if (ProjectSettingsClass) {
+		patch_method_return(ProjectSettingsClass->value, "get_setting", "Variant");
+		patch_method_return(ProjectSettingsClass->value, "get_setting_with_override", "Variant");
+	}
+	HashMap<StringName, ClassInfo>::Iterator InputMapClass = classes.find("InputMap");
+	if (InputMapClass) {
+		patch_method_return(InputMapClass->value, "has_action", "Boolean");
+		patch_method_return(InputMapClass->value, "get_actions", "Array");
+		patch_method_return(InputMapClass->value, "get_action_description", "String");
+		patch_method_return(InputMapClass->value, "action_get_deadzone", "Float");
+		patch_method_return(InputMapClass->value, "action_has_event", "Boolean");
+		patch_method_return(InputMapClass->value, "action_get_events", "Array");
+		patch_method_return(InputMapClass->value, "event_is_action", "Boolean");
+	}
+	HashMap<StringName, ClassInfo>::Iterator PhysicsServer2DClass = classes.find("PhysicsServer2D");
+	if (PhysicsServer2DClass) {
+		patch_method_return(PhysicsServer2DClass->value, "shape_get_data", "Variant");
+		patch_method_return(PhysicsServer2DClass->value, "area_get_param", "Variant");
+		patch_method_return(PhysicsServer2DClass->value, "body_get_param", "Variant");
+		patch_method_return(PhysicsServer2DClass->value, "body_get_state", "Variant");
+		patch_method_return(PhysicsServer2DClass->value, "body_get_direct_state", "PhysicsDirectBodyState2D");
+	}
+	HashMap<StringName, ClassInfo>::Iterator PhysicsServer3DClass = classes.find("PhysicsServer3D");
+	if (PhysicsServer3DClass) {
+		patch_method_return(PhysicsServer3DClass->value, "shape_get_data", "Variant");
+		patch_method_return(PhysicsServer3DClass->value, "area_get_param", "Variant");
+		patch_method_return(PhysicsServer3DClass->value, "body_get_param", "Variant");
+		patch_method_return(PhysicsServer3DClass->value, "body_get_state", "Variant");
+		patch_method_return(PhysicsServer3DClass->value, "body_get_direct_state", "PhysicsDirectBodyState3D");
+		patch_method_return(PhysicsServer3DClass->value, "soft_body_get_state", "Variant");
+	}
+	HashMap<StringName, ClassInfo>::Iterator RayCast2DClass = classes.find("RayCast2D");
+	if (RayCast2DClass) {
+		patch_method_return(RayCast2DClass->value, "get_target_position", "Vector2");
+		patch_method_return(RayCast2DClass->value, "is_colliding", "Boolean");
+		patch_method_return(RayCast2DClass->value, "get_collider_rid", "RID");
+		patch_method_return(RayCast2DClass->value, "get_collider_shape", "Integer");
+		patch_method_return(RayCast2DClass->value, "get_collision_point", "Vector2");
+		patch_method_return(RayCast2DClass->value, "get_collision_normal", "Vector2");
+		patch_method_return(RayCast2DClass->value, "is_enabled", "Boolean");
+		patch_method_return(RayCast2DClass->value, "get_collision_mask", "Integer");
+		patch_method_return(RayCast2DClass->value, "get_collision_mask_value", "Boolean");
+		patch_method_return(RayCast2DClass->value, "get_exclude_parent_body", "Boolean");
+		patch_method_return(RayCast2DClass->value, "is_collide_with_areas_enabled", "Boolean");
+		patch_method_return(RayCast2DClass->value, "is_collide_with_bodies_enabled", "Boolean");
+		patch_method_return(RayCast2DClass->value, "is_hit_from_inside_enabled", "Boolean");
+	}
+	HashMap<StringName, ClassInfo>::Iterator RayCast3DClass = classes.find("RayCast3D");
+	if (RayCast3DClass) {
+		patch_method_return(RayCast3DClass->value, "get_target_position", "Vector3");
+		patch_method_return(RayCast3DClass->value, "is_colliding", "Boolean");
+		patch_method_return(RayCast3DClass->value, "get_collider_rid", "RID");
+		patch_method_return(RayCast3DClass->value, "get_collider_shape", "Integer");
+		patch_method_return(RayCast3DClass->value, "get_collision_point", "Vector3");
+		patch_method_return(RayCast3DClass->value, "get_collision_normal", "Vector3");
+		patch_method_return(RayCast3DClass->value, "get_collision_face_index", "Integer");
+		patch_method_return(RayCast3DClass->value, "is_enabled", "Boolean");
+		patch_method_return(RayCast3DClass->value, "get_collision_mask", "Integer");
+		patch_method_return(RayCast3DClass->value, "get_collision_mask_value", "Boolean");
+		patch_method_return(RayCast3DClass->value, "get_exclude_parent_body", "Boolean");
+		patch_method_return(RayCast3DClass->value, "is_collide_with_areas_enabled", "Boolean");
+		patch_method_return(RayCast3DClass->value, "is_collide_with_bodies_enabled", "Boolean");
+		patch_method_return(RayCast3DClass->value, "is_hit_from_inside_enabled", "Boolean");
+		patch_method_return(RayCast3DClass->value, "is_hit_back_faces_enabled", "Boolean");
+	}
+
+	auto patch_joint_param_methods = [&](const StringName &p_class_name, const Vector<StringName> &p_param_setters, const Vector<StringName> &p_param_getters, const Vector<StringName> &p_flag_setters = Vector<StringName>(), const Vector<StringName> &p_flag_getters = Vector<StringName>()) {
+		HashMap<StringName, ClassInfo>::Iterator JointClass = classes.find(p_class_name);
+		if (!JointClass) {
+			return;
+		}
+		Vector<PropertyInfo> set_param_args;
+		set_param_args.push_back(PropertyInfo(Variant::INT, "param"));
+		set_param_args.push_back(PropertyInfo(Variant::FLOAT, "value"));
+		Vector<PropertyInfo> get_param_args;
+		get_param_args.push_back(PropertyInfo(Variant::INT, "param"));
+		for (const StringName &setter : p_param_setters) {
+			patch_method_signature(JointClass->value, setter, set_param_args, "void");
+		}
+		for (const StringName &getter : p_param_getters) {
+			patch_method_signature(JointClass->value, getter, get_param_args, "Float");
+		}
+
+		Vector<PropertyInfo> set_flag_args;
+		set_flag_args.push_back(PropertyInfo(Variant::INT, "flag"));
+		set_flag_args.push_back(PropertyInfo(Variant::BOOL, "enabled"));
+		Vector<PropertyInfo> get_flag_args;
+		get_flag_args.push_back(PropertyInfo(Variant::INT, "flag"));
+		for (const StringName &setter : p_flag_setters) {
+			patch_method_signature(JointClass->value, setter, set_flag_args, "void");
+		}
+		for (const StringName &getter : p_flag_getters) {
+			patch_method_signature(JointClass->value, getter, get_flag_args, "Boolean");
+		}
+	};
+	patch_joint_param_methods("PinJoint3D", { "set_param" }, { "get_param" });
+	patch_joint_param_methods("ConeTwistJoint3D", { "set_param" }, { "get_param" });
+	patch_joint_param_methods("SliderJoint3D", { "set_param" }, { "get_param" });
+	patch_joint_param_methods("HingeJoint3D", { "set_param" }, { "get_param" }, { "set_flag" }, { "get_flag" });
+	patch_joint_param_methods("Generic6DOFJoint3D", { "set_param_x", "set_param_y", "set_param_z" }, { "get_param_x", "get_param_y", "get_param_z" }, { "set_flag_x", "set_flag_y", "set_flag_z" }, { "get_flag_x", "get_flag_y", "get_flag_z" });
 }
 
 void LunariGodotApi::generate() {
-	if (generated) {
+	const uint32_t core_api_hash = ClassDB::get_api_hash(ClassDB::API_CORE);
+	const uint32_t editor_api_hash = ClassDB::get_api_hash(ClassDB::API_EDITOR);
+	if (generated && generated_core_api_hash == core_api_hash && generated_editor_api_hash == editor_api_hash) {
 		return;
 	}
-	generated = true;
-	classes.clear();
 	LocalVector<StringName> class_names;
 	ClassDB::get_class_list(class_names);
+	if (generated) {
+		bool missing_class = false;
+		for (uint32_t i = 0; i < class_names.size(); i++) {
+			if (!classes.has(class_names[i])) {
+				missing_class = true;
+				break;
+			}
+		}
+		if (!missing_class) {
+			return;
+		}
+	}
+	generated = true;
+	generated_core_api_hash = core_api_hash;
+	generated_editor_api_hash = editor_api_hash;
+	classes.clear();
 	for (uint32_t i = 0; i < class_names.size(); i++) {
 		_generate_class(class_names[i]);
 	}
@@ -351,10 +568,16 @@ void LunariGodotApi::generate() {
 void LunariGodotApi::clear() {
 	classes.clear();
 	generated = false;
+	generated_core_api_hash = 0;
+	generated_editor_api_hash = 0;
 }
 
 bool LunariGodotApi::has_class(const StringName &p_class) {
 	generate();
+	if (!classes.has(p_class) && ClassDB::class_exists(p_class)) {
+		generated = false;
+		generate();
+	}
 	return classes.has(p_class);
 }
 
@@ -799,6 +1022,15 @@ Error LunariGodotApi::write_snapshot(const String &p_path) {
 void LunariGodotApi::get_class_names(Vector<StringName> *r_classes) {
 	ERR_FAIL_NULL(r_classes);
 	generate();
+	LocalVector<StringName> class_names;
+	ClassDB::get_class_list(class_names);
+	for (uint32_t i = 0; i < class_names.size(); i++) {
+		if (!classes.has(class_names[i])) {
+			generated = false;
+			generate();
+			break;
+		}
+	}
 	for (const KeyValue<StringName, ClassInfo> &class_info : classes) {
 		r_classes->push_back(class_info.key);
 	}

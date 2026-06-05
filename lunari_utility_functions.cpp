@@ -4,9 +4,12 @@
 
 #include "lunari_utility_functions.h"
 
+#include "lunari_script.h"
+
 #include "core/io/resource_loader.h"
 #include "core/math/math_funcs.h"
 #include "core/object/class_db.h"
+#include "core/object/ref_counted.h"
 #include "core/object/script_language.h"
 #include "core/string/print_string.h"
 #include "core/variant/typed_array.h"
@@ -69,6 +72,26 @@ static void _lunari_validate_arg_count_range(Variant *r_ret, int p_arg_count, in
 static void _lunari_type_exists(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
 	LUNARI_VALIDATE_ARG_COUNT(1);
 	*r_ret = ClassDB::class_exists(StringName(String(*p_args[0])));
+}
+
+static void _lunari_convert(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(2);
+	if (p_args[1]->get_type() != Variant::INT) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 1;
+		r_error.expected = Variant::INT;
+		return;
+	}
+	const int64_t type = *p_args[1];
+	if (type < 0 || type >= Variant::VARIANT_MAX) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 1;
+		r_error.expected = Variant::INT;
+		return;
+	}
+	Variant::construct(Variant::Type(type), *r_ret, p_args, 1, r_error);
 }
 
 static void _lunari_char(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
@@ -134,6 +157,107 @@ static void _lunari_range(Variant *r_ret, const Variant **p_args, int p_arg_coun
 static void _lunari_load(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
 	LUNARI_VALIDATE_ARG_COUNT(1);
 	*r_ret = ResourceLoader::load(String(*p_args[0]));
+}
+
+static void _lunari_inst_to_dict(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	if (p_args[0]->get_type() == Variant::NIL) {
+		*r_ret = Variant();
+		return;
+	}
+	Object *object = p_args[0]->operator Object *();
+	if (!object || !object->get_script_instance() || object->get_script_instance()->get_language() != LunariLanguage::get_singleton()) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		r_error.expected = Variant::OBJECT;
+		return;
+	}
+	Ref<Script> object_script = object->get_script_instance()->get_script();
+	Ref<LunariScript> script = object_script;
+	if (script.is_null() || !script->get_path().is_resource_file()) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		r_error.expected = Variant::OBJECT;
+		return;
+	}
+
+	LunariScriptInstance *instance = static_cast<LunariScriptInstance *>(object->get_script_instance());
+	Dictionary dictionary;
+	dictionary["@subpath"] = NodePath();
+	dictionary["@path"] = script->get_path();
+	Array field_names = instance->get_field_names();
+	for (int i = 0; i < field_names.size(); i++) {
+		StringName field_name = field_names[i];
+		dictionary[field_name] = instance->get_field(field_name);
+	}
+	*r_ret = dictionary;
+}
+
+static void _lunari_dict_to_inst(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	if (p_args[0]->get_type() != Variant::DICTIONARY) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		r_error.expected = Variant::DICTIONARY;
+		return;
+	}
+	Dictionary dictionary = *p_args[0];
+	if (!dictionary.has("@path")) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		r_error.expected = Variant::DICTIONARY;
+		return;
+	}
+	Ref<Script> loaded_script = ResourceLoader::load(String(dictionary["@path"]));
+	Ref<LunariScript> script = loaded_script;
+	if (script.is_null()) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		r_error.expected = Variant::DICTIONARY;
+		return;
+	}
+	StringName base_type = script->get_instance_base_type();
+	if (base_type == StringName()) {
+		base_type = StringName("RefCounted");
+	}
+	Object *object = ClassDB::instantiate(base_type);
+	if (!object) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		r_error.expected = Variant::DICTIONARY;
+		return;
+	}
+
+	object->set_script(script);
+	ScriptInstance *script_instance = object->get_script_instance();
+	if (!script_instance || script_instance->get_language() != LunariLanguage::get_singleton()) {
+		memdelete(object);
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+		return;
+	}
+	Array keys = dictionary.keys();
+	for (int i = 0; i < keys.size(); i++) {
+		Variant key = keys[i];
+		if (key == Variant("@path") || key == Variant("@subpath")) {
+			continue;
+		}
+		script_instance->set(StringName(String(key)), dictionary[key]);
+	}
+
+	RefCounted *ref_counted = Object::cast_to<RefCounted>(object);
+	if (ref_counted) {
+		Ref<RefCounted> ref(ref_counted);
+		*r_ret = ref;
+		return;
+	}
+	*r_ret = object;
 }
 
 static void _lunari_color8(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
@@ -278,26 +402,12 @@ static void _lunari_pow(Variant *r_ret, const Variant **p_args, int p_arg_count,
 	*r_ret = Math::pow(double(*p_args[0]), double(*p_args[1]));
 }
 
-static Variant _lunari_minmax(const Variant &p_a, const Variant &p_b, Variant::Operator p_op, Callable::CallError &r_error) {
-	Variant result;
-	bool valid = false;
-	Variant::evaluate(p_op, p_a, p_b, result, valid);
-	if (!valid) {
-		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
-		r_error.argument = 0;
-		return Variant();
-	}
-	return bool(result) ? p_a : p_b;
-}
-
 static void _lunari_min(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
-	LUNARI_VALIDATE_ARG_COUNT(2);
-	*r_ret = _lunari_minmax(*p_args[0], *p_args[1], Variant::OP_LESS, r_error);
+	Variant::call_utility_function("min", r_ret, p_args, p_arg_count, r_error);
 }
 
 static void _lunari_max(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
-	LUNARI_VALIDATE_ARG_COUNT(2);
-	*r_ret = _lunari_minmax(*p_args[0], *p_args[1], Variant::OP_GREATER, r_error);
+	Variant::call_utility_function("max", r_ret, p_args, p_arg_count, r_error);
 }
 
 static void _lunari_clamp(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
@@ -432,12 +542,136 @@ static void _lunari_dot(Variant *r_ret, const Variant **p_args, int p_arg_count,
 	}
 }
 
+static void _lunari_print_debug(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	String text;
+	for (int i = 0; i < p_arg_count; i++) {
+		text += p_args[i]->operator String();
+	}
+
+	ScriptLanguage *script = ScriptServer::get_language_for_extension("lu");
+	if (script && script->debug_get_stack_level_count() > 0) {
+		text += "\n   At: " + script->debug_get_stack_level_source(0) + ":" + itos(script->debug_get_stack_level_line(0)) + ":" + script->debug_get_stack_level_function(0) + "()";
+	}
+
+	print_line(text);
+	*r_ret = Variant();
+}
+
+static void _lunari_print_stack(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(0);
+	ScriptLanguage *script = ScriptServer::get_language_for_extension("lu");
+	if (script) {
+		for (int i = 0; i < script->debug_get_stack_level_count(); i++) {
+			print_line("Frame " + itos(i) + " - " + script->debug_get_stack_level_source(i) + ":" + itos(script->debug_get_stack_level_line(i)) + " in function '" + script->debug_get_stack_level_function(i) + "'");
+		}
+	}
+	*r_ret = Variant();
+}
+
+static void _lunari_get_stack(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(0);
+	Array frames;
+	ScriptLanguage *script = ScriptServer::get_language_for_extension("lu");
+	if (script) {
+		for (int i = 0; i < script->debug_get_stack_level_count(); i++) {
+			Dictionary frame;
+			frame["source"] = script->debug_get_stack_level_source(i);
+			frame["function"] = script->debug_get_stack_level_function(i);
+			frame["line"] = script->debug_get_stack_level_line(i);
+			frames.push_back(frame);
+		}
+	}
+	*r_ret = frames;
+}
+
+static void _lunari_var_to_str(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	*r_ret = VariantUtilityFunctions::var_to_str(*p_args[0]);
+}
+
+static void _lunari_str_to_var(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	if (p_args[0]->get_type() != Variant::STRING) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		r_error.expected = Variant::STRING;
+		return;
+	}
+	*r_ret = VariantUtilityFunctions::str_to_var(String(*p_args[0]));
+}
+
+static void _lunari_var_to_bytes(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	*r_ret = VariantUtilityFunctions::var_to_bytes(*p_args[0]);
+}
+
+static void _lunari_bytes_to_var(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	if (p_args[0]->get_type() != Variant::PACKED_BYTE_ARRAY) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		r_error.expected = Variant::PACKED_BYTE_ARRAY;
+		return;
+	}
+	*r_ret = VariantUtilityFunctions::bytes_to_var(PackedByteArray(*p_args[0]));
+}
+
+static void _lunari_var_to_bytes_with_objects(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	*r_ret = VariantUtilityFunctions::var_to_bytes_with_objects(*p_args[0]);
+}
+
+static void _lunari_bytes_to_var_with_objects(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	LUNARI_VALIDATE_ARG_COUNT(1);
+	if (p_args[0]->get_type() != Variant::PACKED_BYTE_ARRAY) {
+		*r_ret = Variant();
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.argument = 0;
+		r_error.expected = Variant::PACKED_BYTE_ARRAY;
+		return;
+	}
+	*r_ret = VariantUtilityFunctions::bytes_to_var_with_objects(PackedByteArray(*p_args[0]));
+}
+
+static void _lunari_hash(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	Variant::call_utility_function("hash", r_ret, p_args, p_arg_count, r_error);
+}
+
+static void _lunari_instance_from_id(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	Variant::call_utility_function("instance_from_id", r_ret, p_args, p_arg_count, r_error);
+}
+
+static void _lunari_is_instance_id_valid(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	Variant::call_utility_function("is_instance_id_valid", r_ret, p_args, p_arg_count, r_error);
+}
+
+static void _lunari_is_instance_valid(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	Variant::call_utility_function("is_instance_valid", r_ret, p_args, p_arg_count, r_error);
+}
+
+static void _lunari_is_same(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	Variant::call_utility_function("is_same", r_ret, p_args, p_arg_count, r_error);
+}
+
 static void _register_lunari_function(const StringName &p_name, LunariUtilityFunctions::FunctionPtr p_function, int p_arg_count, Variant::Type p_return_type) {
 	LunariUtilityFunctionInfo info;
 	info.function = p_function;
 	info.argument_count = p_arg_count;
 	info.return_type = p_return_type;
 	info.method_info = MethodInfo(p_name);
+	info.method_info.return_val.type = p_return_type;
+	(*lunari_utility_functions)[p_name] = info;
+}
+
+static void _register_lunari_function_with_info(const StringName &p_name, LunariUtilityFunctions::FunctionPtr p_function, int p_arg_count, Variant::Type p_return_type, const MethodInfo &p_method_info) {
+	LunariUtilityFunctionInfo info;
+	info.function = p_function;
+	info.argument_count = p_arg_count;
+	info.return_type = p_return_type;
+	info.method_info = p_method_info;
+	info.method_info.return_val.type = p_return_type;
 	(*lunari_utility_functions)[p_name] = info;
 }
 
@@ -448,6 +682,7 @@ static void _register_lunari_vararg_function(const StringName &p_name, LunariUti
 	info.vararg = true;
 	info.return_type = p_return_type;
 	info.method_info = MethodInfo(p_name);
+	info.method_info.return_val.type = p_return_type;
 	info.method_info.flags |= METHOD_FLAG_VARARG;
 	(*lunari_utility_functions)[p_name] = info;
 }
@@ -498,19 +733,56 @@ void LunariUtilityFunctions::register_functions() {
 	lunari_utility_functions = memnew(LunariUtilityFunctionMap);
 
 	_register_lunari_function("type_exists", _lunari_type_exists, 1, Variant::BOOL);
+	MethodInfo convert_info("convert",
+			PropertyInfo(Variant::NIL, "what", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NIL_IS_VARIANT),
+			PropertyInfo(Variant::INT, "type", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_CLASS_IS_ENUM, "Variant.Type"));
+	convert_info.return_val = PropertyInfo(Variant::NIL, "", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NIL_IS_VARIANT);
+	_register_lunari_function_with_info("convert", _lunari_convert, 2, Variant::NIL, convert_info);
 	_register_lunari_function("char", _lunari_char, 1, Variant::STRING);
 	_register_lunari_function("ord", _lunari_ord, 1, Variant::INT);
 	_register_lunari_vararg_function("range", _lunari_range, 3, Variant::ARRAY);
 	_register_lunari_function("load", _lunari_load, 1, Variant::OBJECT);
+	MethodInfo inst_to_dict_info("inst_to_dict", PropertyInfo(Variant::OBJECT, "instance"));
+	inst_to_dict_info.return_val.type = Variant::DICTIONARY;
+	_register_lunari_function_with_info("inst_to_dict", _lunari_inst_to_dict, 1, Variant::DICTIONARY, inst_to_dict_info);
+	MethodInfo dict_to_inst_info("dict_to_inst", PropertyInfo(Variant::DICTIONARY, "dictionary"));
+	dict_to_inst_info.return_val.type = Variant::OBJECT;
+	_register_lunari_function_with_info("dict_to_inst", _lunari_dict_to_inst, 1, Variant::OBJECT, dict_to_inst_info);
 	_register_lunari_vararg_function("Color8", _lunari_color8, 4, Variant::COLOR);
+	_register_lunari_vararg_function("print_debug", _lunari_print_debug, 0, Variant::NIL);
+	_register_lunari_function("print_stack", _lunari_print_stack, 0, Variant::NIL);
+	_register_lunari_function("get_stack", _lunari_get_stack, 0, Variant::ARRAY);
+	MethodInfo var_to_str_info("var_to_str", PropertyInfo(Variant::NIL, "variable", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NIL_IS_VARIANT));
+	var_to_str_info.return_val.type = Variant::STRING;
+	_register_lunari_function_with_info("var_to_str", _lunari_var_to_str, 1, Variant::STRING, var_to_str_info);
+	MethodInfo str_to_var_info("str_to_var", PropertyInfo(Variant::STRING, "string"));
+	str_to_var_info.return_val = PropertyInfo(Variant::NIL, "", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NIL_IS_VARIANT);
+	_register_lunari_function_with_info("str_to_var", _lunari_str_to_var, 1, Variant::NIL, str_to_var_info);
+	MethodInfo var_to_bytes_info("var_to_bytes", PropertyInfo(Variant::NIL, "variable", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NIL_IS_VARIANT));
+	var_to_bytes_info.return_val.type = Variant::PACKED_BYTE_ARRAY;
+	_register_lunari_function_with_info("var_to_bytes", _lunari_var_to_bytes, 1, Variant::PACKED_BYTE_ARRAY, var_to_bytes_info);
+	MethodInfo bytes_to_var_info("bytes_to_var", PropertyInfo(Variant::PACKED_BYTE_ARRAY, "bytes"));
+	bytes_to_var_info.return_val = PropertyInfo(Variant::NIL, "", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NIL_IS_VARIANT);
+	_register_lunari_function_with_info("bytes_to_var", _lunari_bytes_to_var, 1, Variant::NIL, bytes_to_var_info);
+	MethodInfo var_to_bytes_with_objects_info("var_to_bytes_with_objects", PropertyInfo(Variant::NIL, "variable", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NIL_IS_VARIANT));
+	var_to_bytes_with_objects_info.return_val.type = Variant::PACKED_BYTE_ARRAY;
+	_register_lunari_function_with_info("var_to_bytes_with_objects", _lunari_var_to_bytes_with_objects, 1, Variant::PACKED_BYTE_ARRAY, var_to_bytes_with_objects_info);
+	MethodInfo bytes_to_var_with_objects_info("bytes_to_var_with_objects", PropertyInfo(Variant::PACKED_BYTE_ARRAY, "bytes"));
+	bytes_to_var_with_objects_info.return_val = PropertyInfo(Variant::NIL, "", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NIL_IS_VARIANT);
+	_register_lunari_function_with_info("bytes_to_var_with_objects", _lunari_bytes_to_var_with_objects, 1, Variant::NIL, bytes_to_var_with_objects_info);
+	_register_lunari_function("hash", _lunari_hash, 1, Variant::INT);
+	_register_lunari_function("instance_from_id", _lunari_instance_from_id, 1, Variant::OBJECT);
+	_register_lunari_function("is_instance_id_valid", _lunari_is_instance_id_valid, 1, Variant::BOOL);
+	_register_lunari_function("is_instance_valid", _lunari_is_instance_valid, 1, Variant::BOOL);
+	_register_lunari_function("is_same", _lunari_is_same, 2, Variant::BOOL);
 	_register_lunari_function("len", _lunari_len, 1, Variant::INT);
 	_register_lunari_function("is_instance_of", _lunari_is_instance_of, 2, Variant::BOOL);
 	_register_lunari_function("abs", _lunari_abs, 1, Variant::FLOAT);
 	_register_lunari_function("sqrt", _lunari_sqrt, 1, Variant::FLOAT);
 	_register_lunari_function("pow", _lunari_pow, 2, Variant::FLOAT);
 	_register_lunari_function("power", _lunari_pow, 2, Variant::FLOAT);
-	_register_lunari_function("min", _lunari_min, 2, Variant::NIL);
-	_register_lunari_function("max", _lunari_max, 2, Variant::NIL);
+	_register_lunari_vararg_function("min", _lunari_min, 0, Variant::NIL);
+	_register_lunari_vararg_function("max", _lunari_max, 0, Variant::NIL);
 	_register_lunari_function("clamp", _lunari_clamp, 3, Variant::NIL);
 	_register_lunari_function("move_toward", _lunari_move_toward, 3, Variant::FLOAT);
 	_register_lunari_function("floor", _lunari_floor, 1, Variant::FLOAT);

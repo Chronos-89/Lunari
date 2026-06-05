@@ -148,6 +148,8 @@ private:
 	Vector<StringName> _generic_type_arguments(const StringName &p_type) const;
 	HashMap<StringName, StringName> _generic_substitutions_for(const StringName &p_type) const;
 	StringName _substitute_type_parameters(const StringName &p_type, const HashMap<StringName, StringName> &p_substitutions) const;
+	StringName _native_base_for_type(const StringName &p_type) const;
+	StringName _current_native_base() const;
 	void _add_error(int p_line, const String &p_message, int p_column = 1);
 	bool _has_native_member_conflict(const StringName &p_name) const;
 	bool _validate_annotations(const Vector<String> &p_annotations, const String &p_target, int p_line);
@@ -206,7 +208,11 @@ private:
 	bool _validate_user_call_arguments(const StringName &p_owner_type, const StringName &p_method_name, const Vector<String> &p_arg_expressions, const Method &p_method, int p_line_number);
 	bool _validate_private_member_expression(const String &p_expression, int p_line_number);
 	bool _validate_call_expression(const String &p_expression, int p_line_number);
+	void _seed_workspace_symbols(const Array &p_workspace_symbols);
+	const Result &_analyze(const String &p_source, const String &p_path, const HashSet<StringName> &p_known_user_classes, const Array &p_workspace_symbols = Array());
 
 public:
 	const Result &analyze(const String &p_source, const String &p_path = String());
+	const Result &analyze_with_known_types(const String &p_source, const String &p_path, const HashSet<StringName> &p_known_user_classes);
+	const Result &analyze_with_workspace_symbols(const String &p_source, const String &p_path, const Array &p_workspace_symbols);
 };
